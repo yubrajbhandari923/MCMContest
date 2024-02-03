@@ -23,7 +23,7 @@ p1_ace,player 1 hit an untouchable winning serve,0 or 1
 p2_ace,player 2 hit an untouchable winning serve,0 or 1
 p1_winner,player 1 hit an untouchable winning shot,0 or 1
 p2_winner,player 2 hit an untouchable winning shot,0 or 1
-winner_shot_type,category of untouchable shot,"F: Forehand, B: Backhand"
+winner_shot_type,category of untouchable shot,"F: Forehand(1), B: Backhand(2)"
 p1_double_fault,player 1 missed both serves and lost the point,0 or 1
 p2_double_fault,player 2 missed both serves and lost the point,0 or 1
 p1_unf_err,player 1 made an unforced error,0 or 1
