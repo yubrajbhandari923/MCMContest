@@ -5,7 +5,7 @@ from read import *
 
 
 rows = read_csv('./Data/Wimbledon_featured_matches.csv')
-# rows = read_csv('./Data/game.csv')
+# rows = read_csv('./Data/match.csv')
 
 def prob_point_given_server(rows):
     points_won = 0
@@ -155,6 +155,95 @@ def averages(rows):
     print(f'Average Distance Ran Per Point is: {aveDist}')
     print(f'Average Speed Per Serve is: {aveSpeed}')
 
+def proportions(rows):
+    aces1 = 0
+    aces2 = 0
+    aceProp = 0
+    win1 = 0
+    win2 = 0
+    winProp = 0
+    fault1 = 0
+    fault2 = 0
+    fProp = 0
+    fMatches = 31
+    err1 = 0
+    err2 = 0
+    errProp = 0
+    run1 = 0
+    run2 = 0
+    runProp = 0
+
+    for row in rows:
+        run1 += float(row[39])
+        run2 += float(row[40])
+        if row[20] == '1':
+            aces1 += 1
+        if row[21] == '1':
+            aces2 += 1
+        if row[22] == '1':
+            win1 += 1
+        if row[23] == '1':
+            win2 += 1
+        if row[25] == '1':
+            fault1 += 1
+        if row[26] == '1':
+            fault2 += 1
+        if row[27] == '1':
+            err1 += 1
+        if row[28] == '1':
+            err2 += 1
+        if row[19] == '1' and row[7] == '2':
+            aceProp += (aces1/aces2)
+            winProp += (win1/win2)
+            if (fault2 != 0):
+                fProp += (fault1/fault2)
+            else:
+                fMatches -= 1
+            errProp += (err1/err2)
+            runProp += (run1/run2)
+            aces1 = 0
+            aces2 = 0
+            win1 = 0
+            win2 = 0
+            fault1 = 0
+            fault2 = 0
+            err1 = 0
+            err2 = 0
+            run1 = 0
+            run2 = 0
+        if row[19] == '2' and row[8] == '2':
+            aceProp += (aces2/aces1)
+            winProp += (win2/win1)
+            if (fault1 != 0):
+                fProp += (fault2/fault1)
+            else:
+                fMatches -= 1
+            errProp += (err2/err1)
+            runProp += (run2/run1)
+            aces1 = 0
+            aces2 = 0
+            win1 = 0
+            win2 = 0
+            fault1 = 0
+            fault2 = 0
+            err1 = 0
+            err2 = 0
+            run1 = 0
+            run2 = 0
+    
+    prop1 = aceProp/31
+    prop2 = winProp/31
+    prop3 = fProp/fMatches
+    prop4 = errProp/31
+    prop5 = runProp/31
+    print(f'Given a player wins the match, their proportion of aces versus that of their opponent is: {prop1}')
+    print(f'Given a player wins the match, their proportion of winners versus that of their opponent is: {prop2}')
+    print(f'Given a player wins the match, their proportion of double-faults versus that of their opponent is: {prop3}')
+    print(f'Given a player wins the match, their proportion of unforced errors versus that of their opponent is: {prop4}')
+    print(f'Given a player wins the match, their proportion of meters run versus that of their opponent is: {prop5}')
+
+
+proportions(rows)
 
 # prob_point_given_server(rows)
 # win_game_given_server(rows)
@@ -162,8 +251,7 @@ def averages(rows):
 # win_point_given_2faultlast(rows)
 # win_set_given_prevSet(rows)
 # win_game_given_prevGame(rows)
-averages(rows)
-
+# averages(rows)
 
 
 # print(f'mean: {statistics.mean()}')
