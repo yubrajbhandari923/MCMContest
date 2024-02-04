@@ -242,8 +242,18 @@ def proportions(rows):
     print(f'Given a player wins the match, their proportion of unforced errors versus that of their opponent is: {prop4}')
     print(f'Given a player wins the match, their proportion of meters run versus that of their opponent is: {prop5}')
 
+# err = 0
+# rowNum = 0
+# for row in rows:
+#     rowNum += 1
+#     if not (row[11] == '0' or row[11] == '15' or row[11] == '30' or row[11] == '40' or row[11] == 'AD'):
+#         err += 1
+#         print(rowNum)
+#     if not (row[12] == '0' or row[12] == '15' or row[12] == '30' or row[12] == '40' or row[12] == 'AD'):
+#         err += 1
+#         print(rowNum)
+# print(err)
 
-proportions(rows)
 
 # prob_point_given_server(rows)
 # win_game_given_server(rows)
@@ -252,6 +262,7 @@ proportions(rows)
 # win_set_given_prevSet(rows)
 # win_game_given_prevGame(rows)
 # averages(rows)
+# proportions(rows)
 
 
 # print(f'mean: {statistics.mean()}')
