@@ -3,18 +3,24 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import logging
+import matplotlib.patches as mpatches
+
 logging.basicConfig(filename="prob.log", level=logging.DEBUG)
 
-df = pd.read_csv('Data/Wimbledon_featured_matches.csv')
+df = pd.read_csv("Data/Wimbledon_featured_matches.csv")
+
 
 def divide_by_matches(df):
-    return [df[df['match_id'] == i] for i in df['match_id'].unique()]
+    return [df[df["match_id"] == i] for i in df["match_id"].unique()]
+
 
 def divide_by_sets(match_df):
-    return [match_df[match_df['set_no'] == i] for i in match_df['set_no'].unique()]
+    return [match_df[match_df["set_no"] == i] for i in match_df["set_no"].unique()]
+
 
 def divide_by_games(set_df):
-    return [set_df[set_df['game_no'] == i] for i in set_df['game_no'].unique()]
+    return [set_df[set_df["game_no"] == i] for i in set_df["game_no"].unique()]
+
 
 def match_winner(match):
     last_row = match.iloc[-1]
@@ -25,208 +31,129 @@ def match_winner(match):
     else:
         return 2
 
+
+def add_match_victor(df):
+    match_df = divide_by_matches(df)
+    for match in match_df:
+        winner = match_winner(match)
+        match.loc[:, "match_victor"] = winner
+    return pd.concat(match_df)
+
+
 matches_df = divide_by_matches(df)
 
 
-# global x
-x =0
-class Probablities:
-
-    def __init__(self, Fij, state=(0, 0, 0, 0, 0, 0)):
+class MatchFlowModel:
+    def __init__(self, Fij):
         self.Fij = Fij
-        self.state = state
-        self.P_g_cache = {}
-        self.P_s_cache = {}
-        self.P_tb_cache = {}
+        self.P_tb1_cache = {}
+        self.P_tb2_cache = {}
         self.P_m_cache = {}
 
-        global x
-        x = 0
-
-    def set_state(self, state):
-        if len(state) != 6:
-            raise ValueError("state should be a tuple or a list")
-
-        si, sj, gi, gj, xi, xj = state
-        map_score = {"0": 0, "15": 1, "30": 2, "40": 3}
-        if xi in map_score and xj in map_score:
-            self.state = (si, sj, gi, gj, map_score[xi], map_score[xj])
-        elif xi == "AD":
-            self.state = (si, sj, gi, gj, 3, 2)
-        elif xj == "AD":
-            self.state = (si, sj, gi, gj, 2, 3)
-        else:
-            self.state = (si, sj, gi, gj, xi, xj)
-        return self.state
-
-    def P_g(self, state):
-        """
-        P_g(xi, xj)
-        """
-        if len(state) != 6:
-            raise ValueError("state should be a tuple or a list")
-
-        si, sj, gi, gj, xi, xj = state
-
-        as_str = "".join(map(str, state))
-
-        # Check in cache
-        if as_str in self.P_g_cache:
-            return self.P_g_cache[as_str]
-
-        if xi == 4 and xj <= 2:
-            p = 1
-        elif xj == 4 and xi <= 2:
-            p = 0
-        elif xi == 3 and xj == 3:
-            p = (self.Fij**2) / (self.Fij**2 + (1 - self.Fij) ** 2)
-        else:
-            p = self.Fij * self.P_g((si, sj, gi, gj, xi + 1, xj)) + (
-                1 - self.Fij
-            ) * self.P_g((si, sj, gi, gj, xi, xj + 1))
-
-        # print(f"P_g({state}) = {p}")
-        self.P_g_cache[as_str] = p
-        return p
-
-    def P_s(self, state):
-        """
-        P_s(gi, gj)
-        """
-        if len(state) != 6:
-            raise ValueError("state should be a tuple or a list")
-
-        si, sj, gi, gj, xi, xj = state
-
-        as_str = "".join(map(str, state))
-        # Check in cache
-
-        if as_str in self.P_s_cache:
-            return self.P_s_cache[as_str]
-        if gi >= 6 and (gi - gj) <= 4:
-            p= 1
-        elif gj >= 6 and (gj - gj) <= 4:
-            p= 0
-        elif gi == 6 and gj == 6:
-            p= self.P_tb(state)
-        else:
-            p= self.P_g((si, sj, gi, gj, 0, 0)) * (
-                1 - self.P_s((si, sj, gj, gi + 1, xi, xj))
-            ) + (1 - self.P_g((si, sj, gi, gj, 0, 0))) * self.P_s(
-                (si, sj, gj + 1, gi, xi, xj)
-            )
-        # print(f"P_s({state}) = {p}")
-
-        # Store in cache
-        self.P_s_cache[as_str] = p
-        return p
-
     def P_tb(self, state):  # Ambiguous
-        if len(state) != 6:
-            raise ValueError("state should be a tuple or a list")
-        raise NotImplementedError
         si, sj, gi, gj, xi, xj = state
-        if xi >= 7 and xi - xj >= 5:
-            return 1
+
+        if state in self.P_tb1_cache:
+            return self.P_tb1_cache[state]
+
+        if xi == xj and xj >= 7:
+            p = 1 / 2
+
+        elif xi >= 7 and xi - xj >= 2:
+            p = self.P_m((si + 1, sj, 0, 0, 0, 0))
+
         elif xj >= 7 and xj - xi >= 2:
-            return 0
+            p = self.P_m((si, sj + 1, 0, 0, 0, 0))
+
         elif (xi + xj) % 2 == 1:
-            return self.Fij * self.P_tb((si, sj, gi + 1, gj, xi, xj)) + (
+            if xi > 9 or xj > 9:
+                xi -= 2
+                xj -= 2
+
+            p = self.Fij * self.P_m((si, sj, gi, gj, xi + 1, xj)) + (
                 1 - self.Fij
-            ) * self.P_tb((si, sj, gi, gj + 1, xi, xj))
+            ) * self.P_m((si, sj, gi, gj, xi, xj + 1))
         else:
-            return self.Fij * (1 - self.P_tb((si, sj, gj, gi + 1, xi, xj))) + (
+            if xi > 9 or xj > 9:
+                xi -= 2
+                xj -= 2
+            p = self.Fij * (1 - self.P_m((sj, si, gj, gi, xj, xi + 1))) + (
                 1 - self.Fij
-            ) * self.P_tb((si, sj, gj + 1, gi, xi, xj))
+            ) * (1 - self.P_m((sj, si, gj, gi, xj + 1, xi)))
+
+        self.P_tb1_cache[state] = p
+        return p
+
+    def P_tb5(self, state):
+        si, sj, gi, gj, xi, xj = state
+
+        if state in self.P_tb2_cache:
+            return self.P_tb2_cache[state]
+
+        if xi >= 10 and xi - xj >= 2:
+            p = 1
+        elif xj >= 10 and xj - xi >= 2:
+            p = 0
+        elif xi == 10 and xj == 10:
+            p = 1 / 2
+        elif (xi + xj) % 2 == 1:
+            p = self.Fij * self.P_tb5((si, sj, gi, gj, xi + 1, xj)) + (
+                1 - self.Fij
+            ) * self.P_tb5((si, sj, gi, gj, xi, xj + 1))
+        else:
+            p = self.Fij * (1 - self.P_tb5((sj, si, gj, gi, xj, xi + 1))) + (
+                1 - self.Fij
+            ) * (1 - self.P_tb5((sj, si, gj, gi, xj + 1, xi)))
+
+        self.P_tb2_cache[state] = p
+        return p
 
     def P_m(self, state):
-        if len(state) != 6:
-            raise ValueError("state should be a tuple or a list")
         si, sj, gi, gj, xi, xj = state
-        as_str = "".join(map(str, state))
-
         # Check in cache
-        if as_str in self.P_m_cache:
-            return self.P_m_cache[as_str]
-        
-        if si >= 3:
-            p= 1
-        elif sj >= 3:
-            p =0
-        else:
-            p = self.P_s((si, sj, 0, 0, xi, xj)) * self.P_m(
-                (si + 1, sj, gi, gj, xi, xj)
-            ) + (1 - self.P_s((si, sj, 0, 0, xi, xj))) * self.P_m(
-                (si, sj + 1, gi, gj, xi, xj)
+        if state in self.P_m_cache:
+            return self.P_m_cache[state]
+
+        if si >= 3:  # 1
+            p = 1
+        elif sj >= 3:  # 2
+            p = 0
+        elif (si == 2 and sj == 2) and (gi == 6 and gj == 6):  # 3
+            p = self.P_tb5(state)
+        elif (si != 2 or sj != 2) and (gi == 6 and gj == 6):  # 4
+            p = self.P_tb(state)
+        elif gi >= 6 and (gi - gj) >= 2:  # 5
+            p = 1 - self.P_m((sj, si + 1, 0, 0, 0, 0))
+        elif gj >= 6 and (gj - gi) >= 2:  # 6
+            p = 1 - self.P_m((sj + 1, si, 0, 0, 0, 0))
+        elif xi == 4 and xj <= 2:  # 7
+            p = 1 - self.P_m((sj, si, gj, gi + 1, 0, 0))
+        elif xj == 4 and xi <= 2:  # 8
+            p = 1 - self.P_m((sj, si, gj + 1, gi, 0, 0))
+        elif xi == 3 and xj == 3:
+            p = ((self.Fij**2) / (2 * self.Fij**2 - 2 * self.Fij + 1)) * (
+                1 - self.P_m((sj, si, gj, gi + 1, 0, 0))
             )
-        # print(f"P_m({state}) = {p}")
+        else:
+            p = self.Fij * self.P_m((si, sj, gi, gj, xi + 1, xj)) + (
+                1 - self.Fij
+            ) * self.P_m((si, sj, gi, gj, xi, xj + 1))
+
         self.P_m_cache[state] = p
         return p
 
     def P_win(self, state):
-        if len(state) != 6:
-            raise ValueError("state should have 6 elements")
-
-        si, sj, gi, gj, xi, xj = state
-
-        as_str = "".join(map(str, state))
-
-        # Check in cache
-        if as_str in self.P_m_cache:
-            return self.P_m_cache[as_str]
-        
-        p = self.Fij * self.P_m((si, sj, gi, gj, xi + 1, xj)) + (
-            1 - self.Fij
-        ) * self.P_m((si, sj, gi, gj, xi, xj + 1))
-
-        global x
-        x = x+1
-        print(f"{x}.P_win({state}) {p}")
-        
-        # print("----------------",x)
-
-        self.P_m_cache[as_str] = p
-        return p
-    
-
-def plot_column_vs_columns(match_df, col, cols):
-    fig, ax = plt.subplots(len(cols) // 2 + 2, 2, figsize=(20, 10))
-    j = 0
-    for i, column in enumerate(cols):
-        sns.countplot(x=column, hue=col, data=match_df, ax=ax[j, i % 2])
-        plt.title(f"{column} vs. {col}")
-        plt.xlabel(column)
-        plt.ylabel("Count")
-        fig.legend(title="Point Victor")
-        if i % 2 == 1:
-            j += 1
-    plt.savefig("Data/Plots/plot_column_vs_columns.png")
+        return self.P_m(state)
 
 
-def plot_match_flow(tmp_match_df, coeff=None):
-    # for i in [1, 2]:
-    #     prob_set_diff, prob_game_diff = (0.44796814936847884, 0.39621087314662273)
-    #     match_df.loc[:,f"p{i}_flow"] = (match_df[f"p{i}_sets"] - match_df[f"p{3-i}_sets"]) * prob_set_diff/2 + (match_df[f"p{i}_games"] - match_df[f"p{3-i}_games"]) *prob_game_diff/2 + (match_df[f"p{i}_points_won"] - match_df[f"p{3-i}_points_won"]) * 0.033
-
+def plot_match_flow(tmp_match_df):
     map_score = {"0": 0, "15": 1, "30": 2, "40": 3, "AD": 4}
-    # for i in [1, 2]:
-    #     c1, c2, c3, c4, c5 = coeff
-    #     match_df.loc[:, f"p{i}_flow"] = (
-    #         (c1 / 2) * (match_df[f"p{i}_sets"] - match_df[f"p{3-i}_sets"])
-    #         + (c2 / 5) * (match_df[f"p{i}_games"] - match_df[f"p{3-i}_games"])
-    #         + c3 * (match_df["server"].apply(lambda x: 1 if x == i else 0))
-    #         + (c4 / 3)
-    #         * (
-    #             match_df[f"p{i}_score"].apply(lambda x: map_score.get(x) if x in map_score else int(x))
-    #             - match_df[f"p{3-i}_score"].apply(lambda x: map_score.get(x) if x in map_score else int(x))
-    #         )
-    #         + c5 * (match_df[f"p{i}_ace"].cumsum() - match_df[f"p{3-i}_ace"].cumsum())
-    #     )
 
-    prob = Probablities(0.66)
-    
+    prob = MatchFlowModel(0.66)
+
     match_df = tmp_match_df.copy()
-    # if any row has p1_score as "AD" then replace it with 3 and p2_score with 2
+
+    # Data Cleaning to account for "AD"
     match_df.loc[:, "p1_score"] = match_df["p1_score"].apply(
         lambda x: map_score.get(x) if x in map_score else int(x)
     )
@@ -239,87 +166,91 @@ def plot_match_flow(tmp_match_df, coeff=None):
     match_df[["p1_score", "p2_score"]] = match_df[["p1_score", "p2_score"]].where(
         match_df["p2_score"] != 4, [2, 3]
     )
-    
-    # print(match_df[["p1_sets","p2_sets","p1_games","p2_games","p1_score", "p2_score"]])
-    # match_df.apply(lambda x: print(x["p1_sets"], x["p2_sets"], x["p1_games"], x["p2_games"], x["p1_score"], x["p2_score"]) if x["p1"], axis=1)
 
-    # save the match_df to a csv file
-    match_df.to_csv("Data/match_df.csv")
- 
-    # print("======================================")
     match_df.loc[:, f"p1_flow"] = match_df.apply(
         lambda x: prob.P_win(
-            [
+            (
                 int(x[f"p1_sets"]),
                 int(x[f"p2_sets"]),
                 int(x[f"p1_games"]),
                 int(x[f"p2_games"]),
                 int(x[f"p1_score"]),
                 int(x[f"p2_score"]),
-            ]
+            )
         ),
         axis=1,
     )
 
-    # figure size
-    plt.figure(figsize=(20, 10))
-    sns.lineplot(x=match_df.index, y="p1_flow", data=match_df, linewidth=0.5)
-    # Plot y = 0 line
-    plt.axhline(0, color="black", linewidth=1.5, linestyle="-")
+    plt.figure(figsize=(25, 10))
+    sns.lineplot(
+        x=(match_df.index - match_df.index[0]),
+        y="p1_flow",
+        data=match_df,
+        linewidth=0.5,
+        color="black",
+    )
+    plt.axhline(0.5, color="black", linewidth=1.5, linestyle="-")
 
-    # get the indexes of the set changes
     sets = divide_by_sets(match_df)
     for i, set in enumerate(sets):
-        # draw vertical lines at the beginning of each set
+        center = (
+            (set.index[0] - match_df.index[0]) + (set.index[-1] - match_df.index[0])
+        ) / 2
         plt.axvline(
-            set.index[-1],
+            set.index[-1] - match_df.index[0],
             color="black",
             linewidth=0.5,
             linestyle="-",
             label=f"Set {i+1}",
         )
         plt.text(
-            set.index[-1],
-            0,
+            center,
+            0.85,  # max value in the axis
             f"Set {i+1}",
-            rotation=90,
+            backgroundcolor="white",
+            rotation=0,
             verticalalignment="top",
             horizontalalignment="right",
-            fontdict={"color": "black", "size": 8},
+            fontdict={"color": "black", "size": 12},
         )
 
-    # fill with color blue if p1_flow > 0 and red if p1_flow < 0
     plt.fill_between(
-        match_df.index,
+        match_df.index - match_df.index[0],
         match_df["p1_flow"],
-        0,
-        where=match_df["p1_flow"] > 0,
+        0.5,
+        where=match_df["p1_flow"] > 0.5,
         interpolate=True,
         color="blue",
         alpha=0.3,
     )
     plt.fill_between(
-        match_df.index,
+        match_df.index - match_df.index[0],
         match_df["p1_flow"],
-        0,
-        where=match_df["p1_flow"] < 0,
+        0.5,
+        where=match_df["p1_flow"] < 0.5,
         interpolate=True,
         color="red",
         alpha=0.3,
     )
-    # sns.lineplot(x=match_df.index, y="p2_flow", data=match_df, label="Player 2")
-    plt.title("Match Flow")
-    plt.xlabel("Point")
-    plt.ylabel("Flow")
-    plt.xticks(np.arange(match_df.index[0], match_df.index[-1], 15), rotation=90)
-    # plt.legend(title='Players')
+    plt.title("Match Flow for 2023 Wimbledon Gentlemen's Final", fontdict={"size": 20})
+    plt.xlabel("Point", fontdict={"size": 15})
+    plt.ylabel("Probability of Winning the Match", fontdict={"size": 15})
+    plt.xticks(np.arange(0, match_df.index[-1] - match_df.index[0], 15), rotation=0)
+    i0 = match_df.index[0]
+    plt.legend(
+        title="Players",
+        handles=[
+            mpatches.Patch(color="blue", alpha=0.3, label=match_df.at[i0, "player1"]),
+            mpatches.Patch(color="red", alpha=0.3, label=match_df.at[i0, "player2"]),
+        ],
+        loc="upper left",
+        fontsize=12,
+    )
+
+    # plt.savefig("Data/match_flow_final.png")
     plt.show()
 
-    # sns.lineplot(x=match_df.index, y="p1_flow", data=match_df, label="Player 1")
-    # sns.lineplot(x=match_df.index, y="p2_flow", data=match_df, label="Player 2")
-    # plt.title("Match Flow")
-    # plt.xlabel("Point")
-    # plt.ylabel("Flow")
-    # plt.xticks(np.arange(match_df.index[0], match_df.index[-1], 15), rotation=90)
-    # plt.legend(title="Players")
-    # plt.show()
+
+# Champion Ship Match plot
+match_number_in_dataset = -1
+plot_match_flow(matches_df[match_number_in_dataset])
