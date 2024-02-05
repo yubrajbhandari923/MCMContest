@@ -19,6 +19,18 @@ def prob_point_given_server(rows):
     prob_point_given_server = points_won/points_served
     print(f'Given a player serves, their probability of winning the point is: {prob_point_given_server:.4%}')
 
+def prob_point_given_returner(rows):
+    points_won = 0
+    points_returned = 0
+
+    for row in rows:
+        points_returned += 1
+        if row[13] != row[15]:
+            points_won += 1
+
+    prob_point_given_returner = points_won/points_returned
+    print(f'Given a player returns, their probability of winning the point is: {prob_point_given_returner:.4%}')
+
 def win_game_given_server(rows):
     games_won = 0
     games_served = 0
@@ -242,6 +254,56 @@ def proportions(rows):
     print(f'Given a player wins the match, their proportion of unforced errors versus that of their opponent is: {prop4}')
     print(f'Given a player wins the match, their proportion of meters run versus that of their opponent is: {prop5}')
 
+def flow(rows):
+    for row in rows:
+        p = 2/3
+
+        s1 = int(row[7])
+        s2 = int(row[8])
+        g1 = int(row[9])
+        g2 = int(row[10])
+
+        if row[11] == 'AD':
+            p1 = 3
+            p2 = 2
+        elif row[12] == 'AD':
+            p1 = 2
+            p2 = 3
+        else: 
+            if row[11] == '15':
+                p1 = 1
+            elif row[11] == '30':
+                p1 = 2
+            elif row[11] == '40':
+                p1 = 3
+            else:
+                p1 = int(row[11])
+            
+            if row[12] == '15':
+                p2 = 1
+            elif row[12] == '30':
+                p2 = 2
+            elif row[12] == '40':
+                p2 = 3
+            else:
+                p2 = int(row[12])
+        
+        
+        
+        Prob = [[[[[[0 for _ in range(6)]
+                for _ in range(6)]
+                for _ in range(6)]
+                for _ in range(6)]
+                for _ in range(6)]
+                for _ in range(6)]
+        
+
+
+        Pm(si, sj , gi, gj , xi, xj ) = fij ∗ Pm(si, sj , gi, gj , xi + 1, xj ) + (1 − fij )Pm(si, sj , gi, gj , xi, xj + 1)
+
+
+
+
 # err = 0
 # rowNum = 0
 # for row in rows:
@@ -256,6 +318,7 @@ def proportions(rows):
 
 
 # prob_point_given_server(rows)
+# prob_point_given_returner(rows)
 # win_game_given_server(rows)
 # win_point_given_1fault(rows)
 # win_point_given_2faultlast(rows)
