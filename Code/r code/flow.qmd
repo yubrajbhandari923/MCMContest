@@ -1,0 +1,103 @@
+
+---
+title: "Exploratory Data Analysis"
+author: "Caitlin Tuttle"
+format: pdf
+editor: source
+prefer-html: true
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: xelatex
+
+---
+
+```{r setup, echo = F}
+
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(ggplot2)
+library(dplyr)
+
+
+#library(depmixS4)
+
+
+```
+
+```{r}
+setwd("~/Downloads")
+eda <- read_csv("Wimbledon_featured_matches.csv", show_col_types = FALSE)
+
+```
+
+```{r}
+# Recursive function to calculate win probability
+
+eda$serve_probability1 <- ifelse(eda$server == 1, 0.63, 0.37)
+eda$serve_probability2 <- ifelse(eda$server == 2, 0.63, 0.37)
+
+# Assuming 'p1_score' column represents the player 1's score
+# Map the values to standard tennis scores
+eda$p2_score <- ifelse(eda$p1_score == "AD", 30, eda$p2_score)
+eda$p1_score <- ifelse(eda$p2_score == "AD", 30, eda$p1_score)
+
+eda$p1_score_mapped <- ifelse(eda$p1_score == 1, 15, 
+                               ifelse(eda$p1_score == 2, 30,
+                                      ifelse(eda$p1_score == 3, 40,
+                                             ifelse(eda$p1_score == "AD", 3,
+                                                    ifelse(eda$p2_score == "AD", 3, 0)))))
+
+eda$p2_score <- ifelse(eda$p1_score == "AD", 2, eda$p2_score)
+
+eda$p2_score_mapped <- ifelse(eda$p2_score == 1, 15, 
+                               ifelse(eda$p2_score == 2, 30,
+                                      ifelse(eda$p2_score == 3, 40,
+                                             ifelse(eda$p2_score == "AD", 3,
+                                                    ifelse(eda$p1_score == "AD", 3, 0)))))
+
+
+calculateWinProbabilityForRow <- function(row) {
+  xi <- row["p1_score_mapped"]
+  xj <- row["p2_score_mapped"]
+  fij <- row["serve_probability1"]
+  si <- row["p1_sets"]
+  sj <- row["p2_sets"]
+  gi <- row["p1_games"]
+  gj <- row["p2_games"]
+
+  calculateWinProbability <- function(xi, xj, fij, si, sj, gi, gj) {
+    # Base cases
+    if (!is.na(xi) && !is.na(xj) && !is.na(fij) && !is.na(si) && !is.na(sj) && !is.na(gi) && !is.na(gj)) {
+      if (xi == 4 && xj <= 2) return(1)
+      if (xj == 4 && xi <= 2) return(0)
+      if (xi == 3 && xj == 3) return(fij^2 / (fij^2 + (1 - fij)^2))
+    }
+
+    # Recursive cases
+    if (!is.na(xi) && !is.na(xj) && !is.na(fij) && !is.na(si) && !is.na(sj) && !is.na(gi) && !is.na(gj) &&
+        xi == 3 && xj < 3) {
+      return(fij * calculateWinProbability(xi + 1, xj, fij, si, sj, gi, gj) +
+             (1 - fij) * calculateWinProbability(xi, xj + 1, fij, si, sj, gi, gj))
+    } else if (!is.na(xi) && !is.na(xj) && !is.na(fij) && !is.na(si) && !is.na(sj) && !is.na(gi) && !is.na(gj) &&
+               xj == 3 && xi < 3) {
+      return(fij * calculateWinProbability(xi + 1, xj, fij, si, sj, gi, gj) +
+             (1 - fij) * calculateWinProbability(xi, xj + 1, fij, si, sj, gi, gj))
+    }
+
+    return(NA)  # Add appropriate handling for other cases if needed
+  }
+
+  return(calculateWinProbability(xi, xj, fij, si, sj, gi, gj))
+}
+
+# Apply the function row-wise to the entire dataset
+eda$win_probability <- apply(eda, 1, calculateWinProbabilityForRow)
+
+# Display the updated dataset with win probabilities
+print(eda)
+
+
+```
+

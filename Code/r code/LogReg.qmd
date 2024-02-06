@@ -1,0 +1,244 @@
+---
+title: "Logistic Regression"
+author: "Caitlin Tuttle"
+format: pdf
+editor: source
+prefer-html: true
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: xelatex
+
+---
+
+```{r setup, echo = F}
+
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(ggplot2)
+library(caret)
+library(dplyr)
+library(pROC)
+library(skimr)
+library(patchwork)
+library(kableExtra)
+library(broom)
+library(gridExtra)
+library(fuzzyjoin)
+library(stringdist)
+library(car)
+
+
+```
+
+```{r}
+setwd("~/Downloads")
+eda <- read_csv("Wimbledon_featured_matches.csv", show_col_types = FALSE)
+
+```
+
+
+```{r}
+
+eda$winner_shot_type[eda$p1_ace == 1] <- "Ace"
+eda$winner_shot_type[eda$p2_ace == 1] <- "Ace"
+
+eda$server[eda$server == 1] <- "Player 1"
+eda$server[eda$server == 2] <- "Player 2"
+
+eda$game_victor[eda$game_victor == 1] <- "Player 1"
+eda$game_victor[eda$game_victor == 2] <- "Player 2"
+
+eda$set_victor[eda$game_victor == 1] <- "Player 1"
+eda$set_victor[eda$game_victor == 2] <- "Player 2"
+
+eda$p1_net_pt[eda$p1_net_pt == 0] <- "Not at Net"
+eda$p1_net_pt[eda$p1_net_pt == 1] <- "At Net"
+
+eda$p2_net_pt[eda$p2_net_pt == 0] <- "Not at Net"
+eda$p2_net_pt[eda$p2_net_pt == 1] <- "At Net"
+
+eda$p1_net_pt_won[eda$p1_net_pt_won == 0] <- "Failed at net"
+eda$p1_net_pt_won[eda$p1_net_pt_won == 1] <- "Scored At Net"
+
+eda$p2_net_pt_won[eda$p2_net_pt_won == 0] <- "Failed at net"
+eda$p2_net_pt_won[eda$p2_net_pt_won == 1] <- "Scored At Net"
+
+eda$p1_unf_err[eda$p1_unf_err == 0] <- "No unforced Er"
+eda$p1_unf_err[eda$p1_unf_err == 1] <- "Unforced Er"
+
+eda$p2_unf_err[eda$p2_unf_err == 0] <- "No unforced Er"
+eda$p2_unf_err[eda$p2_unf_err == 1] <- "Unforced Er"
+
+eda$serve_no[eda$serve_no == 1] <- "1"
+eda$serve_no[eda$serve_no == 2] <- "2"
+
+eda$p1_sets[eda$p1_sets == 0] <- "0 won"
+eda$p1_sets[eda$p1_sets == 1] <- "1 won"
+eda$p1_sets[eda$p1_sets == 2] <- "2 won"
+
+eda$p2_sets[eda$p2_sets == 0] <- "0 won"
+eda$p2_sets[eda$p2_sets == 1] <- "1 won"
+eda$p2_sets[eda$p2_sets == 2] <- "2 won"
+
+```
+
+```{r}
+eda <- eda %>%
+  mutate(ace = ifelse(p1_ace > p2_ace, "ace", ifelse(p2_ace > p1_ace, "ace", 0))) %>%
+  mutate(winning_shot = ifelse(p1_winner > p2_winner, "P1 untouchable winner", ifelse(p2_winner > p1_winner, "P2 untouchable winner", 0))) %>%
+    mutate(break_shot = ifelse(p1_break_pt > p2_break_pt, "P1 break P2 serve", ifelse(p2_break_pt > p1_break_pt, "P2 break P1 serve", 0))) %>%
+  mutate(break_winning_shot = ifelse(p1_break_pt_won > p2_break_pt_won, "P1 break win", ifelse(p2_break_pt_won > p1_break_pt_won, "P2 break win", 0))) %>%
+  mutate(break_missed_shot = ifelse(p1_break_pt_missed > p2_break_pt_missed, "P1 break missed", ifelse(p2_break_pt_missed > p1_break_pt_missed, "P2 break missed", 0))) %>%
+  mutate(double_fault = ifelse(p1_double_fault > p2_double_fault, "player 1 fault", ifelse(p2_double_fault > p1_double_fault, "player 2 fault", 0))) %>%
+  mutate(Performance_Difference = p1_points_won - p2_points_won)
+eda
+```
+
+
+```{r}
+eda_split     <- initial_split(eda, prop = .75)
+eda_train_log <- training(eda_split)
+eda_test_log  <- testing(eda_split)
+```
+
+
+```{r}
+set.seed(1152)
+eda_train_log$point_victor <- as.factor(eda_train_log$point_victor)
+
+# Specify the logistic regression model
+eda_fit_logistic1 <- glm(point_victor ~ server + lag(ace) + lag(speed_mph), data = eda_train_log,
+                        family = binomial)
+
+# Extract tidy output from the logistic regression model
+eda_tidy_logistic1 <- tidy(eda_fit_logistic1)
+
+# Display tidy output as a table
+kable(eda_tidy_logistic1, digits = 3)
+```
+
+```{r}
+eda_train_log$point_victor <- as.factor(eda_train_log$point_victor)
+
+# Specify the logistic regression model
+eda_fit_logistic2 <- glm(point_victor ~ lag(point_victor) + server + lag(ace) +  lag(speed_mph) + lag(break_shot) + lag(serve_width) + p1_sets + p2_sets + p1_games + p2_games + serve_no + lag(p1_distance_run) + lag(p2_distance_run)
+      , data = eda_train_log,
+                        family = binomial)
+
+# Extract tidy output from the logistic regression model
+eda_tidy_logistic2 <- tidy(eda_fit_logistic2)
+
+# Display tidy output as a table
+kable(eda_tidy_logistic2, digits = 3)
+
+vif_values <- car::vif(eda_fit_logistic2)
+vif_values
+```
+
+```{r}
+# Define the format_estimate function
+format_estimate <- function(x, p_value) {
+  ifelse(p_value < 0.1, paste0(format(x, nsmall = 2), "**"), format(x, nsmall = 2))
+}
+
+# Assuming `eda_tidy` contains the relevant information
+eda_tidy_logistic2 <- eda_tidy_logistic2 %>%
+  mutate(estimate_formatted = format_estimate(estimate, p.value))
+
+# Create a table with kable
+eda_tidy_logistic2 %>%
+  kable(caption = "Fitted Model (** if significant)") %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 8,
+    position = "center",
+    latex_options = c("striped", "hold_position")
+  ) %>%
+  column_spec(3, border_right = TRUE) %>%
+  row_spec(0, bold = TRUE)
+```
+
+```{r}
+eda_train_log$point_victor <- as.factor(eda_train_log$point_victor)
+
+# Specify the logistic regression model
+eda_fit_logistic3 <- glm(point_victor ~ lag(point_victor) + server +  lag(speed_mph) 
+                         + p1_sets + p2_sets + p1_games + p2_games + serve_no 
+                         + lag(p1_distance_run) + lag(p2_distance_run)
+      , data = eda_train_log,
+                        family = binomial)
+
+# Extract tidy output from the logistic regression model
+eda_tidy_logistic3 <- tidy(eda_fit_logistic3)
+
+# Display tidy output as a table
+kable(eda_tidy_logistic3, digits = 3)
+
+vif_values <- car::vif(eda_fit_logistic3)
+vif_values
+```
+1555
+```{r}
+
+library(tidymodels)
+library(pROC)
+library(knitr)
+
+
+# Assuming you have three different logistic regression models (eda_fit_logistic1, eda_fit_logistic2, eda_fit_logistic3)
+# Replace these with your actual logistic regression models
+# Replace "edaflow_test_lin" with your actual test dataset
+
+# Ensure that point_victor is treated as a factor (categorical) in the test dataset
+eda_test_log$point_victor <- as.factor(eda_test_log$point_victor)
+
+# Make predictions on the test dataset for each model
+predictions1 <- predict(eda_fit_logistic1, newdata = eda_test_log, type = "response")
+predictions2 <- predict(eda_fit_logistic2, newdata = eda_test_log, type = "response")
+predictions3 <- predict(eda_fit_logistic3, newdata = eda_test_log, type = "response")
+
+# Evaluate model performance
+roc_curve1 <- roc(eda_test_log$point_victor, predictions1)
+roc_auc1 <- auc(roc_curve1)
+accuracy1 <- mean((predictions1 > 0.5) == as.integer(eda_test_log$point_victor))
+rsquared1 <- summary(eda_fit_logistic1)$r.squared
+
+roc_curve2 <- roc(eda_test_log$point_victor, predictions2)
+roc_auc2 <- auc(roc_curve2)
+accuracy2 <- mean((predictions2 > 0.5) == as.integer(eda_test_log$point_victor))
+rsquared2 <- summary(eda_fit_logistic2)$r.squared
+
+roc_curve3 <- roc(eda_test_log$point_victor, predictions3)
+roc_auc3 <- auc(roc_curve3)
+accuracy3 <- mean((predictions3 > 0.5) == as.integer(eda_test_log$point_victor))
+rsquared3 <- summary(eda_fit_logistic3)$r.squared
+
+# Calculate AIC and BIC
+aic1 <- AIC(eda_fit_logistic1)
+aic2 <- AIC(eda_fit_logistic2)
+aic3 <- AIC(eda_fit_logistic3)
+
+bic1 <- BIC(eda_fit_logistic1)
+bic2 <- BIC(eda_fit_logistic2)
+bic3 <- BIC(eda_fit_logistic3)
+
+# Create a summary table
+summary_table <- data.frame(
+  Model = c("eda_fit_logistic1", "eda_fit_logistic2", "eda_fit_logistic3"),
+  AUC_ROC = c(roc_auc1, roc_auc2, roc_auc3),
+  AIC = c(aic1, aic2, aic3),
+  BIC = c(bic1, bic2, bic3)
+)
+
+# Display the summary table
+kable(summary_table, digits = 3)
+plot(roc_curve1, col = "blue", main = "ROC Curves for Logistic Regression Models", lwd = 2)
+lines(roc_curve2, col = "red", lwd = 2)
+lines(roc_curve3, col = "green", lwd = 2)
+legend("bottomright", legend = c("Logistic 1", "Logistic 2", "Logistic 3"), col = c("blue", "red", "green"), lwd = 2)
+abline(a = 0, b = 1, col = "gray", lty = 2)  # Diagonal line for reference
+
+```
+

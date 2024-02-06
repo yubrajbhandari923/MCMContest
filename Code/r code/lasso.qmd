@@ -1,0 +1,103 @@
+---
+title: "Logistic Regression"
+author: "Caitlin Tuttle"
+format: pdf
+editor: source
+prefer-html: true
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: xelatex
+
+---
+
+
+
+```{r setup, echo = F}
+
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(ggplot2)
+library(dplyr)
+
+
+#library(depmixS4)
+
+
+```
+
+```{r}
+setwd("~/Downloads")
+eda <- read_csv("Wimbledon_featured_matches.csv", show_col_types = FALSE)
+
+```
+
+```{r}
+
+library(glmnet)
+library(mice)
+library(missForest)
+library(glmnet)
+library(mice)
+library(missForest)
+library(dplyr)
+
+library(dplyr)
+library(missForest)
+
+# Assuming 'eda' is your dataframe
+exclude_cols1 <- c("point_victor")
+
+# Remove rows with missing values
+eda <- na.omit(eda)
+
+# Convert 'point_victor' to numeric if it's not already
+eda$point_victor <- as.numeric(as.character(eda$point_victor))
+
+# Replace missing values in 'elapsed_time' with the mean
+eda$elapsed_time[is.na(eda$elapsed_time)] <- mean(eda$elapsed_time, na.rm = TRUE)
+
+# Convert all variables to factors or numeric as needed
+eda[] <- lapply(eda, function(x) if (is.character(x)) as.factor(x) else x)
+
+# Split the data into predictors (X) and response variable (y)
+X <- as.matrix(eda[, -which(names(eda) %in% exclude_cols1)])  # Exclude specified columns
+y <- as.numeric(as.character(eda$point_victor))  # Response variable as numeric
+
+# Check for missing values in X and y
+if (any(is.na(X)) || any(is.na(y))) {
+  stop("Missing values found in predictors (X) or response variable (y). Handle them appropriately.")
+}
+
+chosen_lambda <- 0.01
+
+# Fit LASSO regression with the chosen lambda
+lasso_model <- glmnet(X, y, alpha = 1)
+plot(lasso_model, xvar = "lambda", label = FALSE)
+legend("topright", legend = colnames(lasso_model$beta), col = 1:ncol(lasso_model$beta), lty = 1, cex = 0.8)
+
+print(lasso_model)
+
+coef(lasso_model, s = 0.1)
+
+plot(lasso_model, xvar = "dev", label = TRUE)
+
+legend("topright", legend = colnames(lasso_model$beta), col = 1:ncol(lasso_model$beta), lty = 1, cex = 0.8)
+
+lasso_coefficients <- coef(lasso_model)
+cat("LASSO Coefficients:\n")
+
+lasso_coefficients_matrix <- as.matrix(lasso_coefficients)
+print(lasso_coefficients_matrix)
+
+lasso_variables <- colnames(coef(lasso_model))
+
+existing_variables <- intersect(lasso_variables, colnames(eda))
+
+# Filter 'new_data' to include only the variables present in the Lasso model
+new_data_lasso <- eda[, existing_variables]
+
+```
+```
+

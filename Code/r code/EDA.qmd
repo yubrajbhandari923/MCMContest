@@ -1,0 +1,1202 @@
+---
+title: "Exploratory Data Analysis"
+author: "Caitlin Tuttle"
+format: pdf
+editor: source
+prefer-html: true
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: xelatex
+
+---
+
+```{r setup, echo = F}
+
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(ggplot2)
+library(caret)
+library(dplyr)
+library(pROC)
+library(skimr)
+library(patchwork)
+library(kableExtra)
+library(broom)
+library(gridExtra)
+library(fuzzyjoin)
+library(stringdist)
+library(car)
+
+
+```
+
+```{r}
+setwd("~/Downloads")
+data <- read_csv("Wimbledon_featured_matches.csv", show_col_types = FALSE)
+eda <- read_csv("Wimbledon_featured_matches.csv", show_col_types = FALSE)
+
+```
+
+
+```{r}
+data$serve_width <- as.factor(data$serve_width)
+data$serve_depth <- as.factor(data$serve_depth)
+data$return_depth <- as.factor(data$return_depth)
+
+data$point_victor <- ifelse(data$point_victor == 1, 1, 0)
+
+# Split the data into training and testing sets
+set.seed(123) # for reproducibility
+train_index <- createDataPartition(data$point_victor, p = 0.8, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+# Build logistic regression model
+model <- glm(point_victor ~ serve_width + serve_depth + return_depth + rally_count + speed_mph,
+             data = train_data, family = binomial)
+
+# Model summary
+summary(model)
+
+# Predictions on test set
+predictions <- predict(model, newdata = test_data, type = "response")
+predicted_classes <- factor(ifelse(predictions > 0.5, 1, 0), levels = levels(test_data$point_victor))
+
+# Model evaluation
+predicted_classes <- factor(ifelse(predictions > 0.5, 1, 0), levels = levels(test_data$point_victor))
+
+# Ensure predicted_classes and test_data$point_victor are factors
+predicted_classes <- factor(predicted_classes)
+test_data$point_victor <- factor(test_data$point_victor)
+
+# Set levels manually if null
+if (is.null(levels(predicted_classes))) {
+  levels(predicted_classes) <- c(0, 1)  # Assuming binary classification (0 and 1)
+}
+
+if (is.null(levels(test_data$point_victor))) {
+  levels(test_data$point_victor) <- c(0, 1)  # Assuming binary classification (0 and 1)
+}
+
+# Ensure predicted_classes has the same levels as test_data$point_victor
+predicted_classes <- factor(predicted_classes, levels = levels(test_data$point_victor))
+
+# Compute confusion matrix
+conf_matrix <- confusionMatrix(predicted_classes, reference = test_data$point_victor)
+print(conf_matrix)
+print(conf_matrix)
+
+
+# Visualization
+# Visualize the probability distribution of predicted outcomes
+ggplot(test_data, aes(x = predictions, fill = factor(point_victor))) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Probability Distribution of Predicted Outcomes",
+       x = "Predicted Probability", y = "Density", fill = "Point Victor") +
+  theme_minimal()
+
+# Plot the predicted vs. actual outcomes
+ggplot(test_data, aes(x = point_victor, y = predictions, color = factor(point_victor))) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  labs(title = "Predicted vs. Actual Outcomes",
+       x = "Actual Outcome", y = "Predicted Probability") +
+  theme_minimal()
+```
+
+```{r}
+# Generate predictions from the logistic regression model
+predictions <- predict(model, newdata = test_data, type = "response")
+
+# Compute ROC curve
+roc_curve <- roc(test_data$point_victor, predictions)
+
+# Calculate AUC
+auc <- auc(roc_curve)
+
+# Plot ROC curve
+plot(roc_curve, main = "ROC Curve",
+     col = "blue", lwd = 2,
+     print.auc = TRUE, auc.polygon = TRUE, grid = TRUE)
+```
+```{r}
+
+by_match <- eda %>%
+  arrange(match_id, desc(row_number())) %>%   
+  distinct(match_id, .keep_all = TRUE) %>%   
+  arrange(row_number())                       
+
+print(by_match)
+
+```
+```{r}
+# Calculate 'sets' variable
+sets <- divide_by_sets(by_match)
+
+# Call plot_match_flow with 'sets' as an argument
+plot_match_flow <- function(by_match, sets) {
+  prob_set_diff <- 0.5
+  prob_game_diff <- 0.5
+  
+  by_match_numeric <- select_if(by_match, is.numeric)
+  
+  for (i in 1:2) {
+    by_match_numeric[, paste0("p", i, "_flow")] <- (by_match_numeric[, paste0("p", i, "_sets")] - by_match_numeric[, paste0("p", 3-i, "_sets")]) * prob_set_diff/2 +
+                                                   (by_match_numeric[, paste0("p", i, "_games")] - by_match_numeric[, paste0("p", 3-i, "_games")]) * prob_game_diff/2 +
+                                                   (by_match_numeric[, paste0("p", i, "_points_won")] - by_match_numeric[, paste0("p", 3-i, "_points_won")]) * 0.033
+  }
+  
+  ggplot(by_match_numeric, aes(x = index)) +
+    geom_line(aes(y = p1_flow), size = 0.5) +
+    geom_hline(yintercept = 0, color = "black", size = 1.5) +
+    geom_vline(xintercept = sets$index, color = "black", size = 0.5) +  # Use 'sets' variable here
+    labs(title = "Match Flow",
+         x = "Point",
+         y = "Flow")
+}
+
+# Call the function with your data frame and 'sets' variable
+plot_match_flow(by_match, sets)
+
+```
+
+
+```{r}
+plot_column_vs_columns <- function(by_match, col, cols) {
+  num_cols <- length(cols)
+  num_rows <- ceiling(num_cols / 2) + 2
+  par(mfrow = c(num_rows, 2))
+  for (i in 1:num_cols) {
+    plot_data <- by_match[, c(cols[i], col)]
+    colnames(plot_data) <- c("x", "hue")
+    barplot(table(plot_data$x, plot_data$hue), beside = TRUE, main = paste(cols[i], "vs.", col), xlab = cols[i], ylab = "Count", legend = rownames(table(plot_data$x, plot_data$hue)))
+  }
+  dev.copy(png, "Data/Plots/plot_column_vs_columns.png")
+  dev.off()
+}
+
+plot_match_flow <- function(by_match) {
+  prob_set_diff <- 0.5
+  prob_game_diff <- 0.5
+  
+  for (i in c(1, 2)) {
+    by_match[, paste0("p", i, "_flow")] <- (by_match[[paste0("p", i, "_sets")]] - by_match[[paste0("p", 3-i, "_sets")]]) * prob_set_diff/2 +
+                                           (by_match[[paste0("p", i, "_games")]] - by_match[[paste0("p", 3-i, "_games")]]) * prob_game_diff/2 +
+                                           (by_match[[paste0("p", i, "_points_won")]] - by_match[[paste0("p", 3-i, "_points_won")]]) * 0.033
+  }
+  
+  plot(by_match$index, by_match$p1_flow, type = "l", lwd = 0.5, xlab = "Point", ylab = "Flow", main = "Match Flow")
+  abline(h = 0, col = "black", lwd = 1.5)
+  
+sets <- rowSums(select(by_match, starts_with("p") & ends_with("_sets")))
+
+  
+  for (i in 1:length(sets)) {
+    abline(v = sets[i], col = "black", lwd = 0.5)
+  }
+  
+  polygon(c(by_match$index, rev(by_match$index)), c(by_match$p1_flow, rep(0, length(by_match$p1_flow))), col = ifelse(by_match$p1_flow > 0, "blue", "red"), border = NA, alpha = 0.3)
+  
+  lines(by_match$index, by_match$p1_flow, col = "black", lty = 1)
+  lines(by_match$index, by_match$p2_flow, col = "black", lty = 1)
+  
+  legend("topright", legend = c("Player 1", "Player 2"), col = c("black", "black"), lty = 1)
+}
+
+# Call the functions with your data frame
+plot_column_vs_columns(by_match, "col", c("column1", "column2", "column3"))
+plot_match_flow(by_match)
+
+```
+
+
+```{r}
+library(ggplot2)
+
+plot_column_vs_columns <- function(by_match, col, cols) {
+  num_cols <- length(cols)
+  num_rows <- ceiling(num_cols / 2) + 1
+  options(repr.plot.width=15, repr.plot.height=10)
+  par(mfrow = c(num_rows, 2))
+  for (i in 1:num_cols) {
+    plot_data <- by_match[, c(cols[i], col)]
+    colnames(plot_data) <- c("x", "hue")
+    ggplot(plot_data, aes(x = x, fill = hue)) +
+      geom_bar(position = "dodge") +
+      labs(title = paste(cols[i], "vs.", col),
+           x = cols[i],
+           y = "Count",
+           fill = "Point Victor")
+  }
+  dev.copy(png, "Data/Plots/plot_column_vs_columns.png")
+  dev.off()
+}
+
+
+plot_match_flow <- function(by_match) {
+  for (i in 1:2) {
+    by_match[, paste0("p", i, "_flow")] <- (by_match[, paste0("p", i, "_sets")] - by_match[, paste0("p", 3-i, "_sets")]) * prob_set_diff/2 +
+                                           (by_match[, paste0("p", i, "_games")] - by_match[, paste0("p", 3-i, "_games")]) * prob_game_diff/2 +
+                                           (by_match[, paste0("p", i, "_points_won")] - by_match[, paste0("p", 3-i, "_points_won")]) * 0.033
+  }
+  
+  ggplot(by_match, aes(x = index)) +
+    geom_line(aes(y = p1_flow), size = 0.5) +
+    geom_hline(yintercept = 0, color = "black", size = 1.5) +
+    geom_vline(xintercept = sets$index, color = "black", size = 0.5) +
+    geom_ribbon(aes(ymin = p1_flow, ymax = 0, fill = p1_flow > 0), alpha = 0.3) +
+    geom_ribbon(aes(ymin = p1_flow, ymax = 0, fill = p1_flow < 0), alpha = 0.3) +
+    labs(title = "Match Flow",
+         x = "Point",
+         y = "Flow") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    facet_grid(rows = vars(p2_flow)) +
+    scale_fill_manual(values = c("red", "blue")) +
+    guides(fill = guide_legend(title = "Players"))
+}
+
+# Call the functions with your data frame
+plot_column_vs_columns(by_match, "col", cols)
+plot_match_flow(by_match)
+
+
+```
+
+
+```{r}
+
+eda$winner_shot_type[eda$p1_ace == 1] <- "Ace"
+eda$winner_shot_type[eda$p2_ace == 1] <- "Ace"
+
+#eda$server[eda$server == 1] <- "Player 1"
+#eda$server[eda$server == 2] <- "Player 2"
+
+
+#eda$game_victor[eda$game_victor == 1] <- "Player 1"
+#eda$game_victor[eda$game_victor == 2] <- "Player 2"
+
+#eda$set_victor[eda$game_victor == 1] <- "Player 1"
+#eda$set_victor[eda$game_victor == 2] <- "Player 2"
+
+#eda$point_victor[eda$point_victor == 1] <- "Player 1"
+#eda$point_victor[eda$point_victor == 2] <- "Player 2"
+
+eda$p1_net_pt[eda$p1_net_pt == 0] <- "Not at Net"
+eda$p1_net_pt[eda$p1_net_pt == 1] <- "At Net"
+
+eda$p2_net_pt[eda$p2_net_pt == 0] <- "Not at Net"
+eda$p2_net_pt[eda$p2_net_pt == 1] <- "At Net"
+
+eda$p1_net_pt_won[eda$p1_net_pt_won == 0] <- "Failed at net"
+eda$p1_net_pt_won[eda$p1_net_pt_won == 1] <- "Scored At Net"
+
+eda$p2_net_pt_won[eda$p2_net_pt_won == 0] <- "Failed at net"
+eda$p2_net_pt_won[eda$p2_net_pt_won == 1] <- "Scored At Net"
+
+eda$p1_unf_err[eda$p1_unf_err == 0] <- "No unforced Er"
+eda$p1_unf_err[eda$p1_unf_err == 1] <- "Unforced Er"
+
+eda$p2_unf_err[eda$p2_unf_err == 0] <- "No unforced Er"
+eda$p2_unf_err[eda$p2_unf_err == 1] <- "Unforced Er"
+
+eda$serve_no[eda$serve_no == 1] <- "1"
+eda$serve_no[eda$serve_no == 2] <- "2"
+
+#eda$p1_sets[eda$p1_sets == 0] <- "0 won"
+#eda$p1_sets[eda$p1_sets == 1] <- "1 won"
+#eda$p1_sets[eda$p1_sets == 2] <- "2 won"
+
+#eda$p2_sets[eda$p2_sets == 0] <- "0 won"
+#eda$p2_sets[eda$p2_sets == 1] <- "1 won"
+#eda$p2_sets[eda$p2_sets == 2] <- "2 won"
+
+```
+
+```{r}
+eda <- eda %>%
+  mutate(ace = ifelse(p1_ace > p2_ace, "P1 ace", ifelse(p2_ace > p1_ace, "P2 ace", 0))) %>%
+  mutate(winning_shot = ifelse(p1_winner > p2_winner, "P1 untouchable winner", ifelse(p2_winner > p1_winner, "P2 untouchable winner", 0))) %>%
+    mutate(break_shot = ifelse(p1_break_pt > p2_break_pt, "P1 break P2 serve", ifelse(p2_break_pt > p1_break_pt, "P2 break P1 serve", 0))) %>%
+  mutate(break_winning_shot = ifelse(p1_break_pt_won > p2_break_pt_won, "P1 break win", ifelse(p2_break_pt_won > p1_break_pt_won, "P2 break win", 0))) %>%
+  mutate(break_missed_shot = ifelse(p1_break_pt_missed > p2_break_pt_missed, "P1 break missed", ifelse(p2_break_pt_missed > p1_break_pt_missed, "P2 break missed", 0))) %>%
+  mutate(double_fault = ifelse(p1_double_fault > p2_double_fault, "player 1 fault", ifelse(p2_double_fault > p1_double_fault, "player 2 fault", 0))) %>%
+  mutate(Performance_Difference = p1_points_won - p2_points_won)
+eda
+```
+
+```{r}
+one_match <- eda %>%
+  filter(player1 == "Carlos Alcaraz" | player2 == "Nicholas Jarry")
+
+```
+
+
+```{r}
+by_game <- eda %>%
+  arrange(match_id, game_no, desc(row_number())) %>%  
+  group_by(match_id, game_no) %>%                     
+  slice(1) %>%                                  
+  ungroup()                                    
+
+print(by_game)
+```
+
+```{r}
+by_set <- eda %>%
+  arrange(match_id, set_no, desc(row_number())) %>%   
+  group_by(match_id, set_no) %>%                      
+  slice(1) %>%                                    
+  ungroup()                                      
+
+print(by_set)
+```
+
+
+
+```{r}
+library(ggplot2)
+
+# Assuming match_data contains the tennis match data
+
+# Calculate the point difference between player1 and player2 at each point
+residgraph <- one_match %>%
+  mutate(point_difference = ifelse(point_victor == "Player 1", 1, -1))
+
+# Calculate cumulative sum of point difference to represent momentum
+residgraph <- residgraph %>%
+  group_by(match_id) %>%
+  mutate(momentum = cumsum(point_difference)) %>%
+  ungroup()
+
+residgraph <- residgraph %>%
+  mutate(momentum_color = ifelse(momentum > 50, "Above 50", "Below 50"))
+
+# Plot the momentum for every point with a smooth line
+ggplot(residgraph, aes(x = point_no, y = momentum)) +
+  geom_line(aes(color = momentum_color), size = 1.5) +
+  labs(title = "Momentum in the Tennis Match",
+       x = "Point Number",
+       y = "Momentum") +
+  scale_color_manual(values = c("Above 50" = "blue", "Below 50" = "red")) +  # Set colors
+  theme_minimal()
+
+
+```
+
+
+
+```{r}
+# Load required libraries
+library(ggplot2)
+
+match_data <- data.frame(
+  Point = 1:nrow(eda),
+  Player1_Points = eda$p1_points_won,
+  Player2_Points = eda$p2_points_won
+)
+
+# Calculate performance difference
+match_data$Performance_Difference <- match_data$Player1_Points - match_data$Player2_Points
+
+# Calculate percentage difference
+match_data$Percentage_Difference <- (match_data$Player1_Points - match_data$Player2_Points) / 
+                                    pmax(match_data$Player1_Points, match_data$Player2_Points) * 100
+
+# Visualize match flow
+ggplot(match_data, aes(x = Point)) +
+  geom_line(aes(y = Player1_Points - Player2_Points, color = "Performance Difference")) +
+  geom_line(aes(y = Player1_Points, color = "Player 1")) +
+  geom_line(aes(y = Player2_Points, color = "Player 2")) +
+  labs(x = "Point", y = "Points", color = "Player/Performance Difference") +
+  theme_minimal()
+
+
+```
+
+```{r}
+second_serves <- subset(eda, serve_no == 2)
+
+ggplot(second_serves, aes(x = server, fill = as.factor(point_victor))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Who wins on First Serve",
+       x = "Player Serving",
+       y = "Count of Points Won") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Player 1", "Player 2"), name = "Point Winner") +
+  theme_minimal()
+```
+
+
+```{r}
+first_serves <- subset(eda, serve_no == 1)
+
+ggplot(first_serves, aes(x = server, fill = as.factor(point_victor))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Who wins on First Serve",
+       x = "Player Serving",
+       y = "Count of Points Won") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Player 1", "Player 2"), name = "Point Winner") +
+  theme_minimal()
+```
+
+
+```{r}
+first_serves <- subset(eda, server == "Player 1")
+
+ggplot(first_serves, aes(x = speed_mph, y = point_victor)) +
+  geom_boxplot() +
+  labs(title = "Serve Speed vs. Point Winner",
+       x = "Player 1 Serve Speed (mph)",
+       y = "Who Wins") +
+  theme_minimal()
+
+```
+
+```{r}
+library(ggplot2)
+
+# Assuming "eda" is your data frame
+
+# Subset the data for Player 1's serves
+first_serves <- subset(eda, server == "Player 1")
+
+# Convert double_fault to character
+first_serves$double_fault <- as.character(first_serves$double_fault)
+
+# Recode double_fault column based on numeric values
+first_serves$double_fault_category <- ifelse(first_serves$double_fault == "0", "No Fault", "Player 1 Fault")
+
+unique(first_serves$double_fault_category)
+
+first_serves <- first_serves %>%
+  mutate(p1_distance_two_previous = lag(lag(p1_distance_run)))
+
+ggplot(first_serves, aes(x = double_fault_category, y = p1_distance_two_previous, fill = double_fault_category)) +
+  geom_violin(alpha = 0.5) +
+  labs(title = "Serve Speed vs. Double Faults for Player 1",
+       x = "Double Fault",
+       y = "Player 1 Serve Speed (mph)",
+       fill = "Double Fault") +
+  scale_fill_manual(values = c("green", "red"), labels = c("No Fault", "Player 1 Fault")) +
+  theme_minimal()
+
+```
+
+
+```{r}
+library(ggplot2)
+
+# Assuming "eda" is your data frame
+
+# Subset the data for Player 1's serves
+first_serves <- subset(eda, server == "Player 1")
+
+# Convert double_fault to character
+first_serves$double_fault <- as.character(first_serves$double_fault)
+
+# Recode double_fault column based on numeric values
+first_serves$double_fault_category <- ifelse(first_serves$double_fault == "0", "No Fault", "Player 1 Fault")
+
+first_serves
+# Plot serve speed distribution vs. double faults
+ggplot(first_serves, aes(x = double_fault_category, fill = speed_mph)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Serve Speed vs. Double Faults for Player 1",
+       x = "Player 1 Serve Speed (mph)",
+       y = "Count",
+       fill = "Double Fault") +
+  scale_fill_manual(values = c("green", "red"), labels = c("No Fault", "Player 1 Fault")) +
+  theme_minimal()
+
+
+```
+```{r}
+eda <- eda %>%
+  mutate(p1_distance_previous = lag(p1_distance_run))
+
+ggplot(eda, aes(x = point_victor, y = p1_distance_previous, fill = point_victor)) +
+  geom_violin(alpha = 0.5) +
+  labs(title = "Impact of Previous Distance Run on Point Outcome for Player 1",
+       x = "Point Victor",
+       y = "Distance Run by Player 1 in Previous Point",
+       fill = "Point Victor") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Player 1", "Player 2")) +
+  theme_minimal()
+
+```
+
+```{r}
+eda <- eda %>%
+  mutate(p2_distance_previous = lag(p2_distance_run))
+
+ggplot(eda, aes(x = point_victor, y = p2_distance_previous, fill = point_victor)) +
+  geom_violin(alpha = 0.5) +
+  labs(title = "Impact of Previous Distance Run on Point Outcome for Player 1",
+       x = "Point Victor",
+       y = "Distance Run by Player 1 in Previous Point",
+       fill = "Point Victor") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Player 1", "Player 2")) +
+  theme_minimal()
+
+```
+
+
+```{r}
+# Assuming 'your_data' is your original dataset
+new_eda <- as.data.frame(subset(eda, select = -c(p1_break_pt, p2_break_pt, p1_break_pt_won, 
+                                                  p2_break_pt_won, p1_break_pt_missed, p2_break_pt_missed, p1_ace, p2_ace, p1_winner, p2_winner, p1_double_fault, p2_double_fault)))
+
+```
+
+
+```{r}
+eda_fit <- linear_reg() |>
+  set_engine("lm") |>
+  fit(Performance_Difference ~ server + ace, data = new_eda)
+
+tidy(eda_fit) |>
+  kable(digits = 3)
+```
+
+```{r}
+anova(eda_fit$fit) |>
+  tidy() |>
+  kable(digits = 2)
+```
+
+
+
+```{r}
+# Inspect levels of categorical variables
+summary(new_eda)
+```
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# use seed of 123
+set.seed(123)
+
+# 75% training, 25% testing
+edaflow_split     <- initial_split(new_eda, prop = .75)
+edaflow_train_lin <- training(edaflow_split)
+edaflow_test_lin  <- testing(edaflow_split)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# specify model linear
+edaflow_spec_lin <- linear_reg() |>
+  set_engine("lm")
+```
+
+```{r}
+library(interactions)
+
+```
+
+```{r}
+
+# Find interaction terms in the dataset
+#interactions <- interactions(new_eda)
+
+# Print the detected interaction terms
+#print(interactions)
+```
+
+
+
+```{r}
+# Fit the regression model excluding interaction variables and "Performance_Difference"
+model <- lm(Performance_Difference ~ ., data = new_eda)
+
+# Check model summary
+summary(model)
+
+
+```
+
+
+```{r}
+# Fit the initial regression model with all variables
+initial_model <- lm(Performance_Difference ~ ., data = new_eda)
+
+# Perform stepwise variable selection
+final_model <- step(initial_model)
+
+# Check the summary of the final model
+summary(final_model)
+
+```
+
+```{r}
+# Convert character variables to factors with more than one level
+# Convert character variables to factors
+new_eda <- as.data.frame(lapply(new_eda, function(x) {
+  if(is.character(x)) {
+    factor(x)
+  } else {
+    x
+  }
+}))
+
+# Fit the regression model
+model <- lm(Performance_Difference ~ ., data = new_eda)
+
+# Check model coefficients
+coef_summary <- summary(model)$coefficients
+
+# Check Variance Inflation Factors (VIF)
+vif_values <- car::vif(model)
+
+# Identify predictors with high VIF values (indicative of multicollinearity)
+high_vif_predictors <- names(vif_values[vif_values > 5])  # Adjust the threshold as needed
+
+# Print coefficients and VIF values
+print(coef_summary)
+print(vif_values)
+
+# Print predictors with high VIF values
+print(high_vif_predictors)
+
+
+
+```
+
+
+
+
+```{r}
+# Load necessary libraries
+library(recipes)
+
+# Create the recipe
+edaflow_full_rec_lin <- recipe(Performance_Difference ~ ., data = edaflow_train_lin) |>
+  step_naomit(all_predictors()) |>
+  step_center(all_numeric_predictors()) |>
+  step_dummy(all_nominal_predictors()) |>
+  step_zv(all_predictors())
+
+# Apply the recipe to the training dataset
+edaflow_train_preprocessed <- prep(edaflow_full_rec_lin, training = edaflow_train_lin) %>%
+  bake(new_data = NULL)
+
+# Check the preprocessed dataset
+head(edaflow_train_preprocessed)
+
+```
+```{r}
+# Assuming your_data is your dataset containing the response variable "Performance_Difference" and other predictors
+# Calculate correlation matrix
+str(eda)
+
+# Handle problematic columns
+# For example, if 'var1' and 'var2' are problematic columns, you can remove them from the data frame
+eda <- eda[, !(names(eda) %in% c("var1", "var2"))]
+
+# Convert remaining columns to numeric
+corflow <- as.data.frame(sapply(eda, as.numeric))
+
+
+correlation_matrix <- cor(corflow)
+
+# Display correlation matrix
+print(correlation_matrix)
+
+
+# Extract correlation coefficients for "Performance_Difference" and other predictors
+cor_with_performance_difference <- correlation_matrix["Performance_Difference", -which(names(correlation_matrix) == "Performance_Difference")]
+
+# Display correlation coefficients
+print(cor_with_performance_difference)
+
+
+```
+
+
+
+```{r}
+# create workflow
+edaflow_full_wflow_lin <- workflow() |>
+  add_model(edaflow_spec_lin) |>
+  add_recipe(edaflow_full_rec_lin)
+
+# Fit the model
+edaflow_full_fit_lin <- edaflow_full_wflow_lin |> 
+  fit(data = edaflow_train_lin)
+
+```
+
+```{r}
+
+# vif
+edaflow_full_fit_model <- extract_fit_parsnip(edaflow_full_fit_lin)
+vifflow_values <- vif(edaflow_full_fit_model$fit)
+
+vifflow_df <- as.data.frame(vifflow_values) |>
+  rownames_to_column(var = "Predictor") |>
+  rename(VIF = vifflow_values) |>
+  arrange(-VIF) |>
+  mutate(VIF = round(VIF, 3))
+vifflow_df <- head(vifflow_df,5)
+vifflow_df <- as.data.frame(t(vifflow_df))   # transpose it
+colnames(vifflow_df) <- vifflow_df[1,]       # get row names
+vifflow_df <- vifflow_df[-1, ]               # remove
+
+```
+
+
+```{r}
+
+# get full model then take only significant ones
+eda_full_fit_lin <- eda_full_wflow_lin |> 
+  fit(data = eda_train_lin)
+eda_full_sig_lin <- tidy(eda_full_fit_lin) |> 
+  filter(p.value <= 0.1)
+
+# separate into two columns and then combine to make easier to display
+eda_full_fit1_lin <- head(eda_full_sig_lin) |>
+  select(term, estimate, p.value) |>
+  mutate(across(c(estimate, p.value), round, 3),
+         count = row_number()) 
+eda_full_fit2_lin <- tail(eda_full_sig_lin, 6) |>
+  select(term, estimate, p.value) |>
+  mutate(across(c(estimate, p.value), round, 3),
+         count = row_number()) 
+names(eda_full_fit2_lin) <- paste(names(eda_full_fit2_lin), "cont", sep = "_")
+combined_full_fit_lin <- merge(eda_full_fit1_lin, eda_full_fit2_lin, by.x = "count", 
+                      by.y = "count_cont", all.x = TRUE)
+combined_full_fit_lin <- combined_full_fit_lin |> select(-count)
+
+combined_full_fit_lin
+```
+
+
+
+
+
+
+```{r}
+pass_gr <- ggplot(data = by_set, aes(x = factor(p1_sets), fill = factor(p1_games))) +
+  geom_bar() +
+  labs(x = "Sets won (by player 1)",
+       title = "Distribution of sets won by player one looking at games won") +
+  theme_minimal() +
+  theme(text = element_text(size = 7)) +
+  geom_text(stat='count', aes(label=..count..), vjust=-.05, size=3, position = position_stack(vjust = 0.5)) +
+  guides(fill = guide_legend(title = "Games won"))
+
+pass_gr
+
+
+```
+
+```{r}
+
+# Assuming you have a dataframe named 'eda' containing the relevant variables
+
+# Filter the dataframe based on the logical condition
+filtered_data <- subset(by_game, server != 0 & game_victor != 0)
+
+# Create a table of counts for serve victor and game victor
+table_data <- table(filtered_data$server, filtered_data$game_victor)
+
+# Convert table to dataframe
+table_df <- as.data.frame(table_data)
+
+# Rename columns
+colnames(table_df) <- c("Serve_Victor", "Game_Victor", "Frequency")
+
+# Convert Serve_Victor and Game_Victor to factor
+table_df$Serve_Victor <- factor(table_df$Serve_Victor)
+table_df$Game_Victor <- factor(table_df$Game_Victor)
+
+# Plotting a grouped bar chart
+grouped_bar <- ggplot(table_df, aes(x = Serve_Victor, y = Frequency, fill = Game_Victor)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Server", y = "Frequency", fill = "Game Victor",
+       title = "Comparison of Serve Victor and Game Victor") +
+  theme_minimal()
+
+grouped_bar
+
+```
+
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# use seed of 123
+set.seed(123)
+
+# 75% training, 25% testing
+eda_split     <- initial_split(eda, prop = .75)
+eda_train_lin <- training(eda_split)
+eda_test_lin  <- testing(eda_split)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# specify model linear
+eda_spec_lin <- linear_reg() |>
+  set_engine("lm")
+```
+
+
+Prove player 1 and player 2 are alliased
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+# Make recipe
+# Make recipe
+eda_train_lin$point_victor <- as.numeric(eda_train_lin$point_victor)
+eda_test_lin$point_victor <- as.numeric(eda_test_lin$point_victor)
+
+eda_full_rec_lin <- recipe(point_victor ~ ace + winning_shot  + break_winning_shot + break_missed_shot + double_fault + p1_distance_run + p2_distance_run + rally_count + serve_width + serve_depth, data = eda_train_lin) |>
+  step_center(all_numeric_predictors()) |>
+  step_dummy(all_nominal_predictors()) |>
+  step_zv(all_predictors())
+
+# Create workflow
+eda_full_wflow_lin <- workflow() |>
+  add_model(eda_spec_lin) |>
+  add_recipe(eda_full_rec_lin)
+
+# Fit the model
+eda_full_fit_lin <- eda_full_wflow_lin |> 
+  fit(data = eda_train_lin)
+
+# Calculate Variance Inflation Factor (VIF)
+eda_full_fit_model <- extract_fit_parsnip(eda_full_fit_lin)
+vif_values <- vif(eda_full_fit_model$fit)
+
+vif_df <- as.data.frame(vif_values) |>
+  rownames_to_column(var = "Predictor") |>
+  rename(VIF = vif_values) |>
+  arrange(-VIF) |>
+  mutate(VIF = round(VIF, 3))
+vif_df <- head(vif_df,5)
+vif_df <- as.data.frame(t(vif_df))   # Transpose it
+colnames(vif_df) <- vif_df[1,]       # Get row names
+vif_df <- vif_df[-1, ]               # Remove header row
+
+```
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# get full model then take only significant ones
+eda_full_fit_lin <- eda_full_wflow_lin |> 
+  fit(data = eda_train_lin)
+eda_full_sig_lin <- tidy(eda_full_fit_lin) |> 
+  filter(p.value <= 0.1)
+
+# separate into two columns and then combine to make easier to display
+eda_full_fit1_lin <- head(eda_full_sig_lin) |>
+  select(term, estimate, p.value) |>
+  mutate(across(c(estimate, p.value), round, 3),
+         count = row_number()) 
+eda_full_fit2_lin <- tail(eda_full_sig_lin, 6) |>
+  select(term, estimate, p.value) |>
+  mutate(across(c(estimate, p.value), round, 3),
+         count = row_number()) 
+names(eda_full_fit2_lin) <- paste(names(eda_full_fit2_lin), "cont", sep = "_")
+combined_full_fit_lin <- merge(eda_full_fit1_lin, eda_full_fit2_lin, by.x = "count", 
+                      by.y = "count_cont", all.x = TRUE)
+combined_full_fit_lin <- combined_full_fit_lin |> select(-count)
+
+combined_full_fit_lin
+```
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# make recipe
+eda_rec_lin <- recipe(point_victor ~ elapsed_time + point_no + game_victor + match_id + serve_width, data = eda_train_lin) |>
+  # center all numerical predictors 
+  step_center(all_numeric_predictors()) |>
+  # make dummy variables for all categorical predictors
+  step_dummy(all_nominal_predictors()) |>
+  # remove any predictors with zero variance
+  step_zv(all_predictors()) 
+
+# create workflow
+eda_wflow_lin <- workflow() |>
+  add_model(eda_spec_lin) |>
+  add_recipe(eda_rec_lin)
+
+# set seed and create 5 folds
+set.seed(123)
+folds <- vfold_cv(eda_train_lin, v = 5)
+
+# additional statistics
+calc_model_stats_lin <- function(x) {
+  glance(extract_fit_parsnip(x)) |>
+    select(adj.r.squared, AIC, BIC)
+}
+
+# conduct cv
+eda_fit_rs_lin <- eda_wflow_lin |>
+  fit_resamples(resamples = folds, 
+                control = control_resamples(extract = calc_model_stats_lin)) 
+eda_rmse_rsq_lin <- collect_metrics(eda_fit_rs_lin, summarize = TRUE)
+eda_rmse_rsq_lin <- tibble(mean_rmse = eda_rmse_rsq_lin$mean[1],
+                           mean_rsq = eda_rmse_rsq_lin$mean[2])
+eda_add_cv_lin <- map_df(eda_fit_rs_lin$.extracts, ~ .x[[1]][[1]]) |>
+  summarise(mean_adj_rsq = mean(adj.r.squared), 
+            mean_aic = mean(AIC), 
+            mean_bic = mean(BIC))
+eda_cv_lin <- bind_cols(eda_rmse_rsq_lin, eda_add_cv_lin)
+
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# make recipe
+eda_int_rec_lin <-
+  recipe(point_victor ~ elapsed_time + point_no + game_victor + match_id + serve_width, data = eda_train_lin) |>
+  # center all numerical predictors
+  step_center(all_numeric_predictors()) |>
+  # make dummy variables for all categorical predictors
+  step_dummy(all_nominal_predictors()) |>
+  # remove any predictors with zero variance
+  step_zv(all_predictors()) |>
+  #step_interact( ~ starts_with("higher"):starts_with("failures")) |>
+  step_interact(~ starts_with("match_id"):starts_with("serve_width"))
+
+# create workflow
+eda_int_wflow_lin <- workflow() |>
+  add_model(eda_spec_lin) |>
+  add_recipe(eda_int_rec_lin)
+
+# 5 fold, reuse from above
+eda_int_fit_rs_lin <- eda_int_wflow_lin |>
+  fit_resamples(resamples = folds, 
+                control = control_resamples(extract = calc_model_stats_lin)) 
+eda_int_rmse_rsq_lin <- collect_metrics(eda_int_fit_rs_lin, summarize = TRUE)
+eda_int_rmse_rsq_lin <- tibble(mean_rmse = eda_int_rmse_rsq_lin$mean[1],
+                           mean_rsq = eda_int_rmse_rsq_lin$mean[2])
+eda_int_add_cv_lin <- map_df(eda_int_fit_rs_lin$.extracts, ~ .x[[1]][[1]]) |>
+  summarise(mean_adj_rsq = mean(adj.r.squared), 
+            mean_aic = mean(AIC), 
+            mean_bic = mean(BIC))
+int_cv_lin <- bind_cols(eda_int_rmse_rsq_lin, eda_int_add_cv_lin)
+
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+#---do for training
+# get aug from fit
+eda_train_fit_lin <- eda_wflow_lin |> 
+  fit(data = eda_train_lin)
+eda_train_check_fit_lin <- extract_fit_parsnip(eda_train_fit_lin)
+eda_train_aug_lin <- augment(eda_train_check_fit_lin$fit)
+
+# check linearity and constant variance
+resvfit_train <-
+  ggplot(data = eda_train_aug_lin, aes(x = .fitted, y = .resid)) +
+  geom_point(size=1, color="#388fa7", alpha = .35) +
+  geom_hline(yintercept = 0,
+             color = "#2a464f",
+             linetype = "dashed") +
+  labs(x = "Fitted values",
+       y = "Residuals",
+       title = "Residuals vs. fitted (Train)") +
+  theme_minimal() + 
+  theme(text = element_text(size =9))
+
+# check normality
+resid_hist_train <- ggplot(data = eda_train_aug_lin, aes(x = .resid)) +
+  geom_histogram(fill = "#388fa7") +
+  labs(x = "Residuals",
+       title = "Distribution of residuals (Train)") +
+  theme_minimal() + 
+  theme(text = element_text(size = 9))
+
+resid_qq_train <- ggplot(data = eda_train_aug_lin, aes(sample = .resid)) +
+  stat_qq(size=1, color="#388fa7", alpha = .35) +
+  stat_qq_line(color = "#2a464f") +
+  labs(x = "Theoretical quantiles",
+       y = "Observed residuals",
+       title = "Normal QQ-plot (Train)") +
+  theme_minimal() + 
+  theme(text = element_text(size = 9))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+eda_fit_lin <- eda_wflow_lin |> 
+  fit(data = eda_train_lin)
+
+# training data
+eda_train_pred_lin <- predict(eda_fit_lin, eda_train_lin) |>
+  bind_cols(eda_train_lin)
+# testing data
+eda_test_pred_lin <- predict(eda_fit_lin, eda_test_lin) |>
+  bind_cols(eda_test_lin)
+
+# calculate rmse
+rmse_train <- rmse(eda_train_pred_lin, truth = point_victor, estimate = .pred)
+rmse_test <- rmse(eda_test_pred_lin, truth = point_victor, estimate = .pred)
+rmse_train_value <- rmse_train$.estimate
+rmse_test_value <- rmse_test$.estimate
+
+rmse_values <- data.frame(
+  Dataset = c("Train", "Test"),
+  RMSE = c(rmse_train_value, rmse_test_value)
+)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Splitting the tidy data into three parts: 31
+eda_fit1_lin <- head(tidy(eda_fit_lin), 16) |>
+  select(term, estimate, p.value) |>
+  mutate(across(c(estimate, p.value), round, 3),
+         count = row_number())
+eda_fit2_lin <- tail(tidy(eda_fit_lin), 15) |>
+  select(term, estimate, p.value) |>
+  mutate(across(c(estimate, p.value), round, 3),
+         count = row_number())
+
+names(eda_fit2_lin) <- paste(names(eda_fit2_lin), "cont", sep = "_")
+comb_eda_fit_lin <- merge(eda_fit1_lin, eda_fit2_lin, by.x = "count", 
+                      by.y = "count_cont", all.x = TRUE)
+comb_eda_fit_lin <- comb_eda_fit_lin |> select(-count)
+
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# add column displaying what type of model
+eda_cv_lin$model <- "reduced model"
+int_cv_lin$model <- "interaction model"
+
+# combine them
+combined_cv_lin <- rbind(eda_cv_lin, int_cv_lin)
+
+kable(combined_cv_lin, caption = "Cross Validation Results MLR", digits = 3) |>
+  kable_styling(
+    full_width = F, font_size = 8,
+    position = "center",
+    latex_options = c("striped", "hold_position")
+  ) |>
+  column_spec(5, border_right = TRUE) |>
+  row_spec(0, bold = TRUE)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+(resvfit_train + resid_hist_train + resid_qq_train) 
+```
+
+
+
+```{r}
+plot_column_vs_columns <- function(match_df, col, cols) {
+  par(mfrow=c(ceiling(length(cols)/2) + 2, 2), mar=c(5, 4, 4, 2) + 0.1, oma=c(0, 0, 2, 0))
+  for (i in 1:length(cols)) {
+    plot_data <- match_df[, c(cols[i], col)]
+    plot_data <- na.omit(plot_data)
+    counts <- table(plot_data)
+    barplot(counts, main=paste(cols[i], "vs.", col), xlab=cols[i], ylab="Count", col=rainbow(length(counts)))
+  }
+  legend("topright", legend=levels(match_df[[col]]), title="Point Victor", fill=rainbow(length(levels(match_df[[col]]))))
+  dev.copy(png, "Data/Plots/plot_column_vs_columns.png")
+  dev.off()
+}
+
+plot_match_flow <- function(match_df) {
+  prob_set_diff <- 0.1 # Adjust these values accordingly
+  prob_game_diff <- 0.05 # Adjust these values accordingly
+
+  match_df$p1_flow <- (match_df$p1_sets - match_df$p2_sets) * prob_set_diff/2 +
+                      (match_df$p1_games - match_df$p2_games) * prob_game_diff/2 +
+                      (match_df$p1_points_won - match_df$p2_points_won) * 0.033
+  match_df$p2_flow <- (match_df$p2_sets - match_df$p1_sets) * prob_set_diff/2 +
+                      (match_df$p2_games - match_df$p1_games) * prob_game_diff/2 +
+                      (match_df$p2_points_won - match_df$p1_points_won) * 0.033
+
+  plot(match_df$index, match_df$p1_flow, type="l", xlab="Point", ylab="Flow", main="Match Flow")
+  abline(h=0, col="black", lty=2)
+  polygon(c(match_df$index, rev(match_df$index)), c(match_df$p1_flow, rep(0, length(match_df$index))), col=ifelse(match_df$p1_flow > 0, "blue", "red"), border=NA, alpha=0.3)
+  polygon(c(match_df$index, rev(match_df$index)), c(match_df$p2_flow, rep(0, length(match_df$index))), col=ifelse(match_df$p2_flow > 0, "blue", "red"), border=NA, alpha=0.3)
+  legend("topright", legend=c("Player 1", "Player 2"), col=c("black", "black"), lty=1)
+}
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+kable(rmse_values, caption = "RMSE btw Train and Test Sets", digits = 3) |>
+  kable_styling(
+    full_width = F, font_size = 8,
+    position = "center",
+    latex_options = c("striped", "hold_position")
+  ) |>
+  row_spec(0, bold = TRUE)
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+format_estimate <- function(x, p_value) {
+  ifelse(p_value < 0.1, paste0(format(x, nsmall = 2), "**"), format(x, nsmall = 2))
+}
+
+comb_eda_fit_lin |>
+  mutate(estimate = format_estimate(estimate, p.value)) |>
+  mutate(estimate_cont = format_estimate(estimate_cont, p.value_cont)) |>
+  kable(caption = "Fitted Final Model (** if significant)") |>
+  kable_styling(
+    full_width = F, font_size = 8,
+    position = "center",
+    latex_options = c("striped", "hold_position")
+  ) |>
+  column_spec(3, border_right = TRUE) |>
+  row_spec(0, bold = TRUE)
+```
+

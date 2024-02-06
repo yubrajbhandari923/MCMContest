@@ -1,0 +1,553 @@
+---
+title: "Exploratory Data Analysis"
+author: "Caitlin Tuttle"
+format: pdf
+editor: source
+prefer-html: true
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: xelatex
+
+---
+
+```{r setup, echo = F}
+
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(ggplot2)
+library(caret)
+library(dplyr)
+library(pROC)
+library(skimr)
+library(patchwork)
+library(kableExtra)
+library(broom)
+library(gridExtra)
+library(fuzzyjoin)
+library(stringdist)
+library(car)
+
+
+```
+
+```{r}
+setwd("~/Downloads")
+eda <- read_csv("Wimbledon_featured_matches.csv", show_col_types = FALSE)
+
+```
+
+```{r}
+
+eda$winner_shot_type[eda$p1_ace == 1] <- "Ace"
+eda$winner_shot_type[eda$p2_ace == 1] <- "Ace"
+
+eda$server[eda$server == 1] <- "Player 1"
+eda$server[eda$server == 2] <- "Player 2"
+
+
+eda$game_victor[eda$game_victor == 1] <- "Player 1"
+eda$game_victor[eda$game_victor == 2] <- "Player 2"
+
+eda$set_victor[eda$game_victor == 1] <- "Player 1"
+eda$set_victor[eda$game_victor == 2] <- "Player 2"
+
+eda$p1_net_pt[eda$p1_net_pt == 0] <- "Not at Net"
+eda$p1_net_pt[eda$p1_net_pt == 1] <- "At Net"
+
+eda$p2_net_pt[eda$p2_net_pt == 0] <- "Not at Net"
+eda$p2_net_pt[eda$p2_net_pt == 1] <- "At Net"
+
+eda$p1_net_pt_won[eda$p1_net_pt_won == 0] <- "Failed at net"
+eda$p1_net_pt_won[eda$p1_net_pt_won == 1] <- "Scored At Net"
+
+eda$p2_net_pt_won[eda$p2_net_pt_won == 0] <- "Failed at net"
+eda$p2_net_pt_won[eda$p2_net_pt_won == 1] <- "Scored At Net"
+
+eda$p1_unf_err[eda$p1_unf_err == 0] <- "No unforced Er"
+eda$p1_unf_err[eda$p1_unf_err == 1] <- "Unforced Er"
+
+eda$p2_unf_err[eda$p2_unf_err == 0] <- "No unforced Er"
+eda$p2_unf_err[eda$p2_unf_err == 1] <- "Unforced Er"
+
+eda$serve_no[eda$serve_no == 1] <- "1"
+eda$serve_no[eda$serve_no == 2] <- "2"
+
+eda$p1_sets[eda$p1_sets == 0] <- "0 won"
+eda$p1_sets[eda$p1_sets == 1] <- "1 won"
+eda$p1_sets[eda$p1_sets == 2] <- "2 won"
+
+eda$p2_sets[eda$p2_sets == 0] <- "0 won"
+eda$p2_sets[eda$p2_sets == 1] <- "1 won"
+eda$p2_sets[eda$p2_sets == 2] <- "2 won"
+
+```
+
+```{r}
+eda <- eda %>%
+  mutate(ace = ifelse(p1_ace > p2_ace, "ace", ifelse(p2_ace > p1_ace, "ace", 0))) %>%
+  mutate(winning_shot = ifelse(p1_winner > p2_winner, "P1 untouchable winner", ifelse(p2_winner > p1_winner, "P2 untouchable winner", 0))) %>%
+    mutate(break_shot = ifelse(p1_break_pt > p2_break_pt, "P1 break P2 serve", ifelse(p2_break_pt > p1_break_pt, "P2 break P1 serve", 0))) %>%
+  mutate(break_winning_shot = ifelse(p1_break_pt_won > p2_break_pt_won, "P1 break win", ifelse(p2_break_pt_won > p1_break_pt_won, "P2 break win", 0))) %>%
+  mutate(break_missed_shot = ifelse(p1_break_pt_missed > p2_break_pt_missed, "P1 break missed", ifelse(p2_break_pt_missed > p1_break_pt_missed, "P2 break missed", 0))) %>%
+  mutate(double_fault = ifelse(p1_double_fault > p2_double_fault, "player 1 fault", ifelse(p2_double_fault > p1_double_fault, "player 2 fault", 0))) %>%
+  mutate(Performance_Difference = p1_points_won - p2_points_won)
+eda
+```
+
+
+
+
+```{r}
+
+ggplot(eda, aes(x = speed_mph, y = ace)) +
+  geom_boxplot() +
+  labs(title = "Serve Speed vs. Number of Aces",
+       x = "Serve Speed (mph)",
+       y = "Ace") +
+  theme_minimal()
+
+```
+
+```{r}
+# Filter the dataset based on match_id and players
+filtered_data <- eda %>%
+  filter(match_id == "2023-wimbledon-1301")
+
+# Calculate serve_points_won for player 1
+serve_points_won_p1 <- sum(filtered_data$point_victor == 1 & filtered_data$server == "Player 1")
+
+# Calculate serve_points_won for player 2
+serve_points_won_p2 <- sum(filtered_data$point_victor == 2 & filtered_data$server == "Player 2")
+
+# Total serve_points_won
+serve_points_won <- serve_points_won_p1 + serve_points_won_p2
+
+# Calculate serve_points_played for player 1
+serve_points_played_p1 <- sum(filtered_data$server == "Player 1")
+
+# Calculate serve_points_played for player 2
+serve_points_played_p2 <- sum(filtered_data$server == "Player 2")
+
+# Total serve_points_played
+serve_points_played <- serve_points_played_p1 + serve_points_played_p2
+
+
+calculate_prior_probability <- function(serve_points_won_p1, serve_points_won_p2, serve_points_played_p1, serve_points_played_p2) {
+  # Calculate prior probability based on serve points won for each player
+  prior_probability_p1 <- serve_points_won_p1 / serve_points_played_p1
+  prior_probability_p2 <- serve_points_won_p2 / serve_points_played_p2
+
+  # Weighted average of prior probabilities
+  total_serve_points_played <- serve_points_played_p1 + serve_points_played_p2
+  prior_probability <- (serve_points_played_p1 / total_serve_points_played) * prior_probability_p1 +
+                       (serve_points_played_p2 / total_serve_points_played) * prior_probability_p2
+  
+  return(prior_probability)
+}
+
+# Calculate prior probability using the function
+prior_probability <- calculate_prior_probability(serve_points_won_p1, serve_points_won_p2, serve_points_played_p1, serve_points_played_p2)
+
+serve_points_won
+serve_points_played
+prior_probability
+
+# Function to perform Bayesian update
+bayesian_update <- function(prior_probability, serve_points_won, serve_points_played) {
+  # Calculate posterior probability using Bayesian update formula
+  posterior_probability <- (prior_probability * serve_points_won + 1) / (serve_points_played + 2)
+  return(posterior_probability)
+}
+
+# Perform Bayesian update for each serve point won
+serve_points_won_seq <- seq(0, serve_points_won, by = 1)  # Sequence of serve points won
+posterior_probabilities <- sapply(serve_points_won_seq, function(serve_points_won) {
+  bayesian_update(prior_probability, serve_points_won, serve_points_played)
+})
+
+# Create data frame for plotting
+plot_data <- data.frame(Serve_Points_Won = serve_points_won_seq, Posterior_Probability = posterior_probabilities)
+
+# Plot Bayesian update
+ggplot(plot_data, aes(x = Serve_Points_Won, y = Posterior_Probability)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  labs(title = "Bayesian Update of Win Probability",
+       x = "Serve Points Won",
+       y = "Posterior Probability") +
+  theme_minimal()
+
+
+```
+
+
+
+
+
+# Example updated serve probabilities
+serve_probability_player1 <- 0.65
+serve_probability_player2 <- 0.70
+
+# Calculate win probability using Barnett-Clarke model
+win_probability <- calculate_win_probability(serve_probability_player1, serve_probability_player2)
+
+# Print win probability
+print(win_probability)
+
+
+
+HYPOTHESIS TEST FOR PREV POINT IMPACTING POINT
+
+```{r}
+hyptest <- eda %>%
+  mutate(prev_point_victor = lag(point_victor))
+
+# Remove the first row as it will have NA for the lagged variable
+hyptest <- na.omit(hyptest)
+
+# Fit a linear regression model
+df_fit <- lm(point_victor ~ prev_point_victor, data = hyptest)
+
+# Tidy up the model results
+tidy_df <- tidy(df_fit)
+
+# Display the tidy results in a table
+kable(tidy_df, digits = 3)
+
+
+```
+
+
+```{r}
+# Install and load the required libraries
+# Install and load the required libraries
+library(infer)
+
+set.seed(1125)
+
+# Generate Null Distribution
+null_dist <- hyptest |>
+  specify(point_victor ~ prev_point_victor) |>
+  hypothesize(null = "independence") |>
+  generate(reps = 1000, type = "permute") |>
+  fit()
+
+```
+
+```{r}
+null_dist |>
+  filter(term == "prev_point_victor") |>
+  ggplot(aes(x = estimate)) +
+  geom_histogram(binwidth = .001)
+```
+
+```{r}
+obs_fit <- hyptest |>
+  specify(point_victor ~ prev_point_victor) |>
+  fit()
+
+obs_fit
+```
+
+```{r}
+get_p_value(
+  null_dist,
+  obs_stat = obs_fit,
+  direction = "two-sided"
+)
+```
+
+The p-value for prev_point_victor indicates that it is statistically significant
+at the 0.05 significance level, suggesting that winning the previous point has 
+a significant impact on winning the current point in the tennis match.
+
+
+SERVES
+
+```{r}
+second_serves <- subset(eda, serve_no == 2)
+
+ggplot(second_serves, aes(x = server, fill = as.factor(point_victor))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Who wins on Second Serve",
+       x = "Player Serving",
+       y = "Count of Points Won") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Player 1", "Player 2"), name = "Point Winner") +
+  theme_minimal()
+```
+
+```{r}
+first_serves <- subset(eda, serve_no == 1)
+
+ggplot(first_serves, aes(x = server, fill = as.factor(point_victor))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Who wins on First Serve",
+       x = "Player Serving",
+       y = "Count of Points Won") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("Player 1", "Player 2"), name = "Point Winner") +
+  theme_minimal()
+```
+
+
+```{r}
+eda_combined <- eda %>%
+  mutate(ace = ifelse(ace == "P2 ace" | ace == "P1 ace", "Ace", ace))
+
+# Create a boxplot to visualize the relationship between serve speed and the combined ace category
+ggplot(eda_combined, aes(x = speed_mph, y = ace)) +
+  geom_boxplot() +
+  labs(title = "Serve Speed vs. Number of Aces",
+       x = "Serve Speed (mph)",
+       y = "Ace") +
+  theme_minimal()
+
+```
+
+```{r}
+first_serves <- subset(eda, server == "Player 1")
+
+ggplot(first_serves, aes(x = speed_mph, y = point_victor)) +
+  geom_boxplot() +
+  labs(title = "Serve Speed vs. Point Winner",
+       x = "Player 1 Serve Speed (mph)",
+       y = "Who Wins") +
+  theme_minimal()
+
+```
+
+
+
+
+
+
+REGRESSION
+
+```{r}
+edaflow_split     <- initial_split(eda, prop = .75)
+edaflow_train_lin <- training(edaflow_split)
+edaflow_test_lin  <- testing(edaflow_split)
+```
+
+
+
+
+```{r}
+library(tidymodels)
+library(kableExtra)
+set.seed(123) 
+# Ensure that point_victor is treated as a factor (categorical)
+edaflow_train_lin$point_victor <- as.numeric(edaflow_train_lin$point_victor)
+# Specify the linear regression model
+eda_spec <- linear_reg() %>%
+  set_engine("lm")
+
+# Fit the model to the data
+eda_fit2 <- lm(point_victor ~ server + ace + speed_mph, data = edaflow_train_lin)
+
+
+# Extract tidy output from the model
+eda_tidy1 <- eda_fit1 %>%
+  tidy()
+
+# Display tidy output as a table
+kable(eda_tidy1, digits = 3)
+
+```
+
+```{r}
+library(tidymodels)
+library(kableExtra)
+
+# Ensure that point_victor is treated as a factor (categorical)
+eda$point_victor <- as.numeric(eda$point_victor)
+# Specify the linear regression model
+eda_fit2 <- lm(point_victor ~ lag(point_victor) + server + lag(ace) + ace + speed_mph + break_shot + serve_width + p1_sets + p2_sets + p1_games + p2_games + serve_no + lag(p1_distance_run) + lag(p2_distance_run)
+      , data = edaflow_train_lin)
+
+# Extract tidy output from the model
+eda_tidy2 <- eda_fit2 %>%
+  tidy()
+
+# Display tidy output as a table
+kable(eda_tidy2, digits = 3)
+
+eda_tidy2
+```
+
+```{r}
+# Define the format_estimate function
+format_estimate <- function(x, p_value) {
+  ifelse(p_value < 0.1, paste0(format(x, nsmall = 2), "**"), format(x, nsmall = 2))
+}
+
+# Assuming `eda_tidy` contains the relevant information
+eda_tidy2 <- eda_tidy2 %>%
+  mutate(estimate_formatted = format_estimate(estimate, p.value))
+
+# Create a table with kable
+eda_tidy2 %>%
+  kable(caption = "Fitted Model (** if significant)") %>%
+  kable_styling(
+    full_width = FALSE,
+    font_size = 8,
+    position = "center",
+    latex_options = c("striped", "hold_position")
+  ) %>%
+  column_spec(3, border_right = TRUE) %>%
+  row_spec(0, bold = TRUE)
+
+
+```
+
+
+
+```{r}
+library(tidymodels)
+library(kableExtra)
+
+
+
+# Ensure that point_victor is treated as a factor (categorical)
+edaflow_train_lin$point_victor <- as.numeric(edaflow_train_lin$point_victor)
+# Specify the linear regression model
+
+
+eda_fit3 <- lm(point_victor ~ lag(point_victor) + server + p1_sets + p1_games + p2_games + lag(p1_distance_run) + lag(p2_distance_run)
+      , data = edaflow_train_lin)
+
+# Extract tidy output from the model
+eda_tidy3 <- eda_fit3 %>%
+  tidy()
+
+# Display tidy output as a table
+kable(eda_tidy3, digits = 3)
+
+eda_tidy3
+```
+
+
+LOGISTICCCCC
+
+```{r}
+edaflow_train_lin$point_victor <- as.factor(edaflow_train_lin$point_victor)
+
+# Specify the logistic regression model
+eda_fit_logistic1 <- glm(point_victor ~ server + ace + speed_mph, data = edaflow_train_lin,
+                        family = binomial)
+
+# Extract tidy output from the logistic regression model
+eda_tidy_logistic1 <- tidy(eda_fit_logistic1)
+
+# Display tidy output as a table
+kable(eda_tidy_logistic1, digits = 3)
+```
+
+```{r}
+edaflow_train_lin$point_victor <- as.factor(edaflow_train_lin$point_victor)
+
+# Specify the logistic regression model
+eda_fit_logistic2 <- glm(point_victor ~ lag(point_victor) + server + lag(ace) + ace + speed_mph + break_shot + serve_width + p1_sets + p2_sets + p1_games + p2_games + serve_no + lag(p1_distance_run) + lag(p2_distance_run)
+      , data = edaflow_train_lin,
+                        family = binomial)
+
+# Extract tidy output from the logistic regression model
+eda_tidy_logistic2 <- tidy(eda_fit_logistic2)
+
+# Display tidy output as a table
+kable(eda_tidy_logistic2, digits = 3)
+
+vif_values <- car::vif(eda_fit_logistic2)
+vif_values
+```
+
+
+
+```{r}
+edaflow_train_lin$point_victor <- as.factor(edaflow_train_lin$point_victor)
+
+# Specify the logistic regression model
+eda_fit_logistic3 <- glm(point_victor ~ lag(point_victor) + server + lag(ace) + speed_mph  + p1_sets + p1_games + p2_games + serve_no
+      , data = edaflow_train_lin,
+                        family = binomial)
+
+# Extract tidy output from the logistic regression model
+eda_tidy_logistic3 <- tidy(eda_fit_logistic2)
+
+# Display tidy output as a table
+kable(eda_tidy_logistic3, digits = 3)
+
+vif_values <- car::vif(eda_fit_logistic3)
+vif_values
+```
+
+
+
+```{r}
+library(tidymodels)
+library(pROC)
+library(knitr)
+
+# Assuming you have three different logistic regression models (model1, model2, model3)
+# Replace these with your actual logistic regression models
+# Replace "edaflow_test_lin" with your actual test dataset
+
+library(tidymodels)
+library(pROC)
+library(knitr)
+
+# Assuming you have three different logistic regression models (eda_fit_logistic1, eda_fit_logistic2, eda_fit_logistic3)
+# Replace these with your actual logistic regression models
+# Replace "edaflow_test_lin" with your actual test dataset
+
+# Ensure that point_victor is treated as a factor (categorical) in the test dataset
+edaflow_test_lin$point_victor <- as.factor(edaflow_test_lin$point_victor)
+
+# Make predictions on the test dataset for each model
+predictions1 <- predict(eda_fit_logistic1, newdata = edaflow_test_lin, type = "response")
+predictions2 <- predict(eda_fit_logistic2, newdata = edaflow_test_lin, type = "response")
+predictions3 <- predict(eda_fit_logistic3, newdata = edaflow_test_lin, type = "response")
+
+# Evaluate model performance
+roc_curve1 <- roc(edaflow_test_lin$point_victor, predictions1)
+roc_auc1 <- auc(roc_curve1)
+accuracy1 <- mean((predictions1 > 0.5) == as.integer(edaflow_test_lin$point_victor))
+rsquared1 <- summary(eda_fit_logistic1)$r.squared
+
+roc_curve2 <- roc(edaflow_test_lin$point_victor, predictions2)
+roc_auc2 <- auc(roc_curve2)
+accuracy2 <- mean((predictions2 > 0.5) == as.integer(edaflow_test_lin$point_victor))
+rsquared2 <- summary(eda_fit_logistic2)$r.squared
+
+roc_curve3 <- roc(edaflow_test_lin$point_victor, predictions3)
+roc_auc3 <- auc(roc_curve3)
+accuracy3 <- mean((predictions3 > 0.5) == as.integer(edaflow_test_lin$point_victor))
+rsquared3 <- summary(eda_fit_logistic3)$r.squared
+
+# Calculate AIC and BIC
+aic1 <- AIC(eda_fit_logistic1)
+aic2 <- AIC(eda_fit_logistic2)
+aic3 <- AIC(eda_fit_logistic3)
+
+bic1 <- BIC(eda_fit_logistic1)
+bic2 <- BIC(eda_fit_logistic2)
+bic3 <- BIC(eda_fit_logistic3)
+
+# Create a summary table
+summary_table <- data.frame(
+  Model = c("eda_fit_logistic1", "eda_fit_logistic2", "eda_fit_logistic3"),
+  AUC_ROC = c(roc_auc1, roc_auc2, roc_auc3),
+  AIC = c(aic1, aic2, aic3),
+  BIC = c(bic1, bic2, bic3)
+)
+
+# Display the summary table
+kable(summary_table, digits = 3)
+plot(roc_curve1, col = "blue", main = "ROC Curves for Logistic Regression Models", lwd = 2)
+lines(roc_curve2, col = "red", lwd = 2)
+lines(roc_curve3, col = "green", lwd = 2)
+legend("bottomright", legend = c("Model 1", "Model 2", "Model 3"), col = c("blue", "red", "green"), lwd = 2)
+abline(a = 0, b = 1, col = "gray", lty = 2)  # Diagonal line for reference
+```
+
